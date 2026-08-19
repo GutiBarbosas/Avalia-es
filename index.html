@@ -1,0 +1,1570 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Avaliação de Desempenho Inteligente | FarmaRede</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: #0f172a; }
+  ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+  @media print {
+    .no-print { display: none !important; }
+    body { background: white !important; }
+    .print-area { color: black !important; }
+  }
+  .score-btn { transition: all .12s ease; }
+  .score-btn:hover { transform: translateY(-2px); }
+  .fade-in { animation: fadeIn .2s ease; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px);} to { opacity: 1; transform: translateY(0);} }
+</style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useMemo, useRef, useEffect } = React;
+
+/* ============================= CONFIGURAÇÃO DA API (GOOGLE SHEETS) ============================= */
+/* Cole aqui a URL do Web App do Apps Script depois de publicá-lo (ver instruções). */
+const CONFIG = {
+  API_URL: 'https://script.google.com/macros/s/AKfycbwS0I8nH592MqxnHPie2Zt8rmL17_RA6uN9ESpUQ8GOau3qcPHba5o7iiYfnhnpcwId/exec',
+};
+
+/* ============================= DADOS BASE ============================= */
+
+const CRITERIOS_COMUNS = [
+  { id: 'pontualidade', label: 'Pontualidade e assiduidade' },
+  { id: 'atendimento', label: 'Atendimento ao cliente' },
+  { id: 'equipe', label: 'Trabalho em equipe' },
+  { id: 'normas', label: 'Cumprimento de normas e procedimentos' },
+  { id: 'organizacao', label: 'Organização do ambiente de trabalho' },
+];
+
+const CRITERIOS_FUNCAO = {
+  'Farmacêutico': [
+    { id: 'tecnica', label: 'Atenção técnica e conferência de receitas' },
+    { id: 'orientacao', label: 'Orientação ao cliente sobre medicamentos' },
+  ],
+  'Balconista': [
+    { id: 'produtos', label: 'Atingimento de Meta' },
+    { id: 'agilidade_atendimento', label: 'Agilidade no atendimento' },
+  ],
+  'Caixa': [
+    { id: 'precisao_caixa', label: 'Precisão no caixa' },
+    { id: 'agilidade_fechamento', label: 'Agilidade no fechamento e atendimento' },
+  ],
+  'Auxiliar de Logística': [
+    { id: 'organizacao_estoque', label: 'Organização e conferência de estoque' },
+    { id: 'cuidado_manuseio', label: 'Cuidado no manuseio e transporte de produtos' },
+  ],
+};
+
+const ESCALA_LABELS = {
+  1: 'Muito abaixo do esperado',
+  2: 'Abaixo do esperado',
+  3: 'Dentro do esperado',
+  4: 'Acima do esperado',
+  5: 'Excelente',
+};
+
+const LOJAS = [
+  { id: "1", nome: "Loja 01" },
+  { id: "2", nome: "Loja 02" },
+  { id: "3", nome: "Loja 03" },
+  { id: "4", nome: "Loja 04" },
+  { id: "5", nome: "Loja 05" },
+  { id: "6", nome: "Loja 06" },
+  { id: "7", nome: "Loja 07" },
+  { id: "8", nome: "Loja 08" },
+  { id: "9", nome: "Centro de Distribuição (CD)" },
+  { id: "10", nome: "Loja 10" },
+  { id: "11", nome: "Loja 11" },
+  { id: "12", nome: "Loja 12" },
+  { id: "13", nome: "Loja 13" },
+  { id: "14", nome: "Loja 14" },
+  { id: "15", nome: "Loja 15" },
+  { id: "16", nome: "Loja 16" },
+  { id: "17", nome: "Loja 17" },
+  { id: "18", nome: "Loja 18" },
+  { id: "19", nome: "Loja 19" },
+  { id: "20", nome: "Loja 20" },
+  { id: "21", nome: "Loja 21" },
+  { id: "22", nome: "Loja 22" },
+  { id: "23", nome: "Loja 23" },
+  { id: "24", nome: "Loja 24" },
+  { id: "25", nome: "Loja 25" },
+  { id: "26", nome: "Loja 26" },
+  { id: "27", nome: "Loja 27" },
+  { id: "28", nome: "Loja 28" },
+  { id: "29", nome: "Loja 29" },
+  { id: "30", nome: "Loja 30" },
+  { id: "31", nome: "Loja 31" },
+];
+
+const FUNCIONARIOS = [
+  { id: "e1", nome: "ADEMILTON H.", funcao: "Farmacêutico", lojaId: "16" },
+  { id: "e2", nome: "ADINAILDES D.", funcao: "Balconista", lojaId: "29" },
+  { id: "e3", nome: "ADRIA D.", funcao: "Balconista", lojaId: "8" },
+  { id: "e4", nome: "ADRIANA D.", funcao: "Balconista", lojaId: "25" },
+  { id: "e5", nome: "ADRIANA G.", funcao: "Balconista", lojaId: "19" },
+  { id: "e286", nome: "AGATHA E.", funcao: "Caixa", lojaId: "29" },
+  { id: "e6", nome: "ALANA D.", funcao: "Caixa", lojaId: "6" },
+  { id: "e7", nome: "ALANA S.", funcao: "Balconista", lojaId: "16" },
+  { id: "e8", nome: "ALCIENE D.", funcao: "Balconista", lojaId: "28" },
+  { id: "e9", nome: "ALESSANDRA S.", funcao: "Balconista", lojaId: "7" },
+  { id: "e10", nome: "ALEXANDRE D.", funcao: "Balconista", lojaId: "24" },
+  { id: "e11", nome: "ALICE B.", funcao: "Caixa", lojaId: "21" },
+  { id: "e12", nome: "ALICE S.", funcao: "Balconista", lojaId: "10" },
+  { id: "e13", nome: "ALINE S.", funcao: "Balconista", lojaId: "10" },
+  { id: "e14", nome: "ALISSON V.", funcao: "Caixa", lojaId: "25" },
+  { id: "e287", nome: "ALLANNA B.", funcao: "Caixa", lojaId: "4" },
+  { id: "e15", nome: "AMANDA A.", funcao: "Caixa", lojaId: "13" },
+  { id: "e16", nome: "ANA C.", funcao: "Balconista", lojaId: "23" },
+  { id: "e17", nome: "ANA C.", funcao: "Balconista", lojaId: "21" },
+  { id: "e288", nome: "ANA F.", funcao: "Caixa", lojaId: "22" },
+  { id: "e18", nome: "ANA L.", funcao: "Balconista", lojaId: "13" },
+  { id: "e19", nome: "ANA L.", funcao: "Balconista", lojaId: "24" },
+  { id: "e20", nome: "ANA P.", funcao: "Balconista", lojaId: "8" },
+  { id: "e21", nome: "ANA P.", funcao: "Farmacêutico", lojaId: "21" },
+  { id: "e22", nome: "ANA V.", funcao: "Balconista", lojaId: "3" },
+  { id: "e23", nome: "ANDRE L.", funcao: "Farmacêutico", lojaId: "8" },
+  { id: "e284", nome: "ANDREA D.", funcao: "Caixa", lojaId: "5" },
+  { id: "e24", nome: "ANDREA G.", funcao: "Farmacêutico", lojaId: "13" },
+  { id: "e271", nome: "ANDREIA A.", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e289", nome: "ANNA C.", funcao: "Caixa", lojaId: "17" },
+  { id: "e25", nome: "ANNE J.", funcao: "Caixa", lojaId: "18" },
+  { id: "e26", nome: "ARIANE G.", funcao: "Balconista", lojaId: "14" },
+  { id: "e272", nome: "ARLENE L.", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e273", nome: "ARMANDO G.", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e290", nome: "ARTHUR G.", funcao: "Caixa", lojaId: "14" },
+  { id: "e27", nome: "BARBARA L.", funcao: "Caixa", lojaId: "24" },
+  { id: "e28", nome: "BARBARA S.", funcao: "Balconista", lojaId: "20" },
+  { id: "e29", nome: "BARBARA S.", funcao: "Caixa", lojaId: "11" },
+  { id: "e30", nome: "BEATRIZ D.", funcao: "Balconista", lojaId: "8" },
+  { id: "e31", nome: "BEATRIZ P.", funcao: "Balconista", lojaId: "21" },
+  { id: "e32", nome: "BIANCA D.", funcao: "Caixa", lojaId: "31" },
+  { id: "e33", nome: "BIANCA D.", funcao: "Farmacêutico", lojaId: "12" },
+  { id: "e34", nome: "BRUNA N.", funcao: "Caixa", lojaId: "3" },
+  { id: "e35", nome: "BRUNA S.", funcao: "Balconista", lojaId: "14" },
+  { id: "e36", nome: "CAIO L.", funcao: "Balconista", lojaId: "28" },
+  { id: "e274", nome: "CAIQUE D.", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e37", nome: "CAIQUE M.", funcao: "Caixa", lojaId: "22" },
+  { id: "e38", nome: "CAMILE D.", funcao: "Caixa", lojaId: "27" },
+  { id: "e39", nome: "CARLOS E.", funcao: "Balconista", lojaId: "27" },
+  { id: "e275", nome: "CARLOS H.", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e40", nome: "CAROLAINE B.", funcao: "Balconista", lojaId: "21" },
+  { id: "e41", nome: "CAROLINA S.", funcao: "Balconista", lojaId: "10" },
+  { id: "e42", nome: "CAROLINE D.", funcao: "Balconista", lojaId: "18" },
+  { id: "e43", nome: "CAROLINE S.", funcao: "Caixa", lojaId: "16" },
+  { id: "e44", nome: "CASSIA C.", funcao: "Balconista", lojaId: "10" },
+  { id: "e291", nome: "CAUA F.", funcao: "Administrativo", lojaId: "9" },
+  { id: "e45", nome: "CAUA L.", funcao: "Caixa", lojaId: "8" },
+  { id: "e46", nome: "CHARLANE B.", funcao: "Farmacêutico", lojaId: "28" },
+  { id: "e47", nome: "CINTIA C.", funcao: "Balconista", lojaId: "19" },
+  { id: "e48", nome: "CLAUDIA B.", funcao: "Caixa", lojaId: "2" },
+  { id: "e49", nome: "CLAUDIANE C.", funcao: "Balconista", lojaId: "26" },
+  { id: "e51", nome: "CRISTIANE D.", funcao: "Balconista", lojaId: "31" },
+  { id: "e52", nome: "CRISTIANE S.", funcao: "Farmacêutico", lojaId: "22" },
+  { id: "e50", nome: "Cleiton Cruz Dos Santos", funcao: "Balconista", lojaId: "10", ativo: false },
+  { id: "e53", nome: "DAIANE S.", funcao: "Balconista", lojaId: "12" },
+  { id: "e54", nome: "DAIANE S.", funcao: "Balconista", lojaId: "11" },
+  { id: "e55", nome: "DAINARA D.", funcao: "Balconista", lojaId: "30" },
+  { id: "e276", nome: "DANIEL A.", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e292", nome: "DANIEL A.", funcao: "Caixa", lojaId: "14" },
+  { id: "e293", nome: "DANIEL C.", funcao: "Balconista", lojaId: "13" },
+  { id: "e294", nome: "DANIEL Z.", funcao: "Administrativo", lojaId: "9" },
+  { id: "e56", nome: "DANIELE D.", funcao: "Caixa", lojaId: "16" },
+  { id: "e57", nome: "DANIELE S.", funcao: "Balconista", lojaId: "24" },
+  { id: "e58", nome: "DANIELLE M.", funcao: "Balconista", lojaId: "24" },
+  { id: "e59", nome: "DANILLE F.", funcao: "Balconista", lojaId: "7" },
+  { id: "e60", nome: "DAVI R.", funcao: "Caixa", lojaId: "3" },
+  { id: "e61", nome: "DAYANE L.", funcao: "Balconista", lojaId: "22" },
+  { id: "e62", nome: "DAYSE A.", funcao: "Caixa", lojaId: "12" },
+  { id: "e63", nome: "DENISE F.", funcao: "Balconista", lojaId: "12" },
+  { id: "e64", nome: "DIEGO O.", funcao: "Balconista", lojaId: "6" },
+  { id: "e65", nome: "DIEGO S.", funcao: "Farmacêutico", lojaId: "23" },
+  { id: "e66", nome: "DIJALMA D.", funcao: "Caixa", lojaId: "11" },
+  { id: "e67", nome: "DIONE K.", funcao: "Balconista", lojaId: "11" },
+  { id: "e68", nome: "DIRLEIDE S.", funcao: "Caixa", lojaId: "14" },
+  { id: "e295", nome: "DÉBORA S.", funcao: "Caixa", lojaId: "10" },
+  { id: "e69", nome: "EDGAR R.", funcao: "Caixa", lojaId: "25" },
+  { id: "e70", nome: "EDILENE D.", funcao: "Balconista", lojaId: "6" },
+  { id: "e71", nome: "EDILENE L.", funcao: "Balconista", lojaId: "1" },
+  { id: "e72", nome: "EDILEUZA O.", funcao: "Balconista", lojaId: "20" },
+  { id: "e73", nome: "EDINAR F.", funcao: "Balconista", lojaId: "19" },
+  { id: "e74", nome: "EDUARDO S.", funcao: "Balconista", lojaId: "27" },
+  { id: "e75", nome: "ELANE D.", funcao: "Balconista", lojaId: "16" },
+  { id: "e76", nome: "ELIANA D.", funcao: "Caixa", lojaId: "23" },
+  { id: "e77", nome: "ELIANE T.", funcao: "Balconista", lojaId: "15" },
+  { id: "e78", nome: "ELIAS S.", funcao: "Balconista", lojaId: "11" },
+  { id: "e79", nome: "ELINEIA T.", funcao: "Balconista", lojaId: "15" },
+  { id: "e80", nome: "ELIZANGELA S.", funcao: "Balconista", lojaId: "28" },
+  { id: "e81", nome: "ELOANE S.", funcao: "Balconista", lojaId: "30" },
+  { id: "e277", nome: "EMANUELE B.", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e82", nome: "EMILI D.", funcao: "Caixa", lojaId: "29" },
+  { id: "e83", nome: "EMILLY B.", funcao: "Caixa", lojaId: "29" },
+  { id: "e84", nome: "EMILY G.", funcao: "Balconista", lojaId: "28" },
+  { id: "e86", nome: "EMYLLI S.", funcao: "Balconista", lojaId: "11" },
+  { id: "e87", nome: "ERILANE N.", funcao: "Balconista", lojaId: "6" },
+  { id: "e88", nome: "ESTEFFANNE C.", funcao: "Caixa", lojaId: "2" },
+  { id: "e89", nome: "EUGENIO L.", funcao: "Balconista", lojaId: "3" },
+  { id: "e90", nome: "EVELLY S.", funcao: "Caixa", lojaId: "15" },
+  { id: "e91", nome: "EVERALDO C.", funcao: "Balconista", lojaId: "17" },
+  { id: "e85", nome: "Emyle Da Silva Ribeiro", funcao: "Balconista", lojaId: "8", ativo: false },
+  { id: "e92", nome: "FABIANO G.", funcao: "Balconista", lojaId: "10" },
+  { id: "e93", nome: "FABIO F.", funcao: "Balconista", lojaId: "14" },
+  { id: "e94", nome: "FELIPE G.", funcao: "Balconista", lojaId: "16" },
+  { id: "e95", nome: "FELIPE G.", funcao: "Caixa", lojaId: "17" },
+  { id: "e96", nome: "FERNANDA B.", funcao: "Caixa", lojaId: "17" },
+  { id: "e97", nome: "FLORENICE C.", funcao: "Balconista", lojaId: "13" },
+  { id: "e98", nome: "FRANCIELE M.", funcao: "Caixa", lojaId: "19" },
+  { id: "e99", nome: "FRANCISCO G.", funcao: "Balconista", lojaId: "17" },
+  { id: "e278", nome: "GABRIEL S.", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e279", nome: "GARIBALDE S.", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e296", nome: "GEANDERSON D.", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e100", nome: "GEISA S.", funcao: "Balconista", lojaId: "3" },
+  { id: "e101", nome: "GEOVANA B.", funcao: "Caixa", lojaId: "25" },
+  { id: "e102", nome: "GEOVANA D.", funcao: "Caixa", lojaId: "29" },
+  { id: "e297", nome: "GEOVANE G.", funcao: "Balconista", lojaId: "18" },
+  { id: "e280", nome: "GEOVANE S.", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e103", nome: "GISELE D.", funcao: "Balconista", lojaId: "4" },
+  { id: "e104", nome: "GRESIELE D.", funcao: "Caixa", lojaId: "23" },
+  { id: "e105", nome: "HANNHA T.", funcao: "Balconista", lojaId: "14" },
+  { id: "e281", nome: "HELDER D.", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e298", nome: "HYAGO D.", funcao: "Farmacêutico", lojaId: "9" },
+  { id: "e106", nome: "IARA N.", funcao: "Caixa", lojaId: "23" },
+  { id: "e107", nome: "IASNAYA D.", funcao: "Farmacêutico", lojaId: "8" },
+  { id: "e108", nome: "ICARO P.", funcao: "Balconista", lojaId: "15" },
+  { id: "e282", nome: "ISABELLA G.", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e109", nome: "ISABELLE D.", funcao: "Caixa", lojaId: "2" },
+  { id: "e110", nome: "ISRAEL M.", funcao: "Balconista", lojaId: "20" },
+  { id: "e111", nome: "ITALO H.", funcao: "Caixa", lojaId: "4" },
+  { id: "e112", nome: "ITAMARA D.", funcao: "Balconista", lojaId: "29" },
+  { id: "e113", nome: "IVANILDA P.", funcao: "Balconista", lojaId: "6" },
+  { id: "e114", nome: "IVANILDES D.", funcao: "Balconista", lojaId: "17" },
+  { id: "e115", nome: "IZAMARA B.", funcao: "Caixa", lojaId: "1" },
+  { id: "e116", nome: "JACIARA A.", funcao: "Balconista", lojaId: "8" },
+  { id: "e299", nome: "JAIARA P.", funcao: "Administrativo", lojaId: "9" },
+  { id: "e117", nome: "JAILDA D.", funcao: "Balconista", lojaId: "18" },
+  { id: "e300", nome: "JAMILE B.", funcao: "Balconista", lojaId: "29" },
+  { id: "e118", nome: "JAMILE D.", funcao: "Balconista", lojaId: "7" },
+  { id: "e119", nome: "JANAI D.", funcao: "Balconista", lojaId: "10" },
+  { id: "e120", nome: "JANE P.", funcao: "Balconista", lojaId: "17" },
+  { id: "e121", nome: "JANINE S.", funcao: "Balconista", lojaId: "13" },
+  { id: "e122", nome: "JAYNE S.", funcao: "Farmacêutico", lojaId: "27" },
+  { id: "e283", nome: "JEANE D.", funcao: "Balconista", lojaId: "12" },
+  { id: "e123", nome: "JEFERSON S.", funcao: "Balconista", lojaId: "6" },
+  { id: "e124", nome: "JEFERSON S.", funcao: "Balconista", lojaId: "25" },
+  { id: "e127", nome: "JESSICA D.", funcao: "Balconista", lojaId: "12" },
+  { id: "e126", nome: "JESSICA D.", funcao: "Caixa", lojaId: "16" },
+  { id: "e128", nome: "JESSICA S.", funcao: "Caixa", lojaId: "26" },
+  { id: "e129", nome: "JESSICA S.", funcao: "Caixa", lojaId: "28" },
+  { id: "e130", nome: "JOABES D.", funcao: "Balconista", lojaId: "15" },
+  { id: "e132", nome: "JOAO V.", funcao: "Balconista", lojaId: "29" },
+  { id: "e134", nome: "JORGE A.", funcao: "Balconista", lojaId: "31" },
+  { id: "e135", nome: "JOSE A.", funcao: "Balconista", lojaId: "21" },
+  { id: "e302", nome: "JOSE F.", funcao: "Administrativo", lojaId: "9" },
+  { id: "e136", nome: "JOSE M.", funcao: "Caixa", lojaId: "3" },
+  { id: "e137", nome: "JOSE R.", funcao: "Balconista", lojaId: "2" },
+  { id: "e303", nome: "JOSEAN C.", funcao: "Administrativo", lojaId: "9" },
+  { id: "e138", nome: "JOSEFA G.", funcao: "Balconista", lojaId: "6" },
+  { id: "e139", nome: "JOSIANE C.", funcao: "Caixa", lojaId: "10" },
+  { id: "e140", nome: "JOSIMEIRE C.", funcao: "Balconista", lojaId: "5" },
+  { id: "e141", nome: "JOTA Q.", funcao: "Balconista", lojaId: "18" },
+  { id: "e142", nome: "JOYCE L.", funcao: "Balconista", lojaId: "15" },
+  { id: "e131", nome: "JOÃO V.", funcao: "Balconista", lojaId: "27" },
+  { id: "e133", nome: "JOÃO V.", funcao: "Balconista", lojaId: "14" },
+  { id: "e301", nome: "JOÃO V.", funcao: "Caixa", lojaId: "23" },
+  { id: "e144", nome: "JULIANE V.", funcao: "Farmacêutico", lojaId: "18" },
+  { id: "e125", nome: "Jenifer De Jesus Gomes Da Silva", funcao: "Caixa", lojaId: "12", ativo: false },
+  { id: "e143", nome: "Juliana Goncalves Dos Reis Souza", funcao: "Caixa", lojaId: "8", ativo: false },
+  { id: "e145", nome: "KAIC D.", funcao: "Balconista", lojaId: "5" },
+  { id: "e146", nome: "KAILLANY V.", funcao: "Caixa", lojaId: "20" },
+  { id: "e304", nome: "KAIQUE M.", funcao: "Administrativo", lojaId: "9" },
+  { id: "e147", nome: "KAIQUE P.", funcao: "Balconista", lojaId: "5" },
+  { id: "e148", nome: "KAMILY N.", funcao: "Caixa", lojaId: "6" },
+  { id: "e149", nome: "KARINE B.", funcao: "Caixa", lojaId: "10" },
+  { id: "e285", nome: "KARINE T.", funcao: "Caixa", lojaId: "5" },
+  { id: "e150", nome: "KAROLINE C.", funcao: "Farmacêutico", lojaId: "1" },
+  { id: "e151", nome: "KETLYN C.", funcao: "Caixa", lojaId: "22" },
+  { id: "e152", nome: "LAINE O.", funcao: "Balconista", lojaId: "15" },
+  { id: "e153", nome: "LAIS F.", funcao: "Balconista", lojaId: "26" },
+  { id: "e154", nome: "LAISA K.", funcao: "Balconista", lojaId: "3" },
+  { id: "e155", nome: "LARISSA F.", funcao: "Balconista", lojaId: "11" },
+  { id: "e156", nome: "LARISSA S.", funcao: "Balconista", lojaId: "17" },
+  { id: "e157", nome: "LEILA F.", funcao: "Balconista", lojaId: "1" },
+  { id: "e158", nome: "LETICIA D.", funcao: "Caixa", lojaId: "11" },
+  { id: "e159", nome: "LIGIA B.", funcao: "Balconista", lojaId: "23" },
+  { id: "e160", nome: "LILIAN D.", funcao: "Balconista", lojaId: "26" },
+  { id: "e161", nome: "LILIANE P.", funcao: "Caixa", lojaId: "20" },
+  { id: "e163", nome: "LOURDES D.", funcao: "Balconista", lojaId: "2" },
+  { id: "e165", nome: "LUANA D.", funcao: "Caixa", lojaId: "21" },
+  { id: "e166", nome: "LUANA F.", funcao: "Balconista", lojaId: "11" },
+  { id: "e167", nome: "LUANA V.", funcao: "Caixa", lojaId: "8" },
+  { id: "e169", nome: "LUCAS C.", funcao: "Caixa", lojaId: "20" },
+  { id: "e170", nome: "LUCAS D.", funcao: "Balconista", lojaId: "21" },
+  { id: "e171", nome: "LUCAS L.", funcao: "Balconista", lojaId: "22" },
+  { id: "e305", nome: "LUCAS L.", funcao: "Administrativo", lojaId: "9" },
+  { id: "e172", nome: "LUCIANA M.", funcao: "Balconista", lojaId: "22" },
+  { id: "e173", nome: "LUCIANO S.", funcao: "Balconista", lojaId: "18" },
+  { id: "e174", nome: "LUDYMILLA S.", funcao: "Caixa", lojaId: "15" },
+  { id: "e175", nome: "LUIS F.", funcao: "Balconista", lojaId: "25" },
+  { id: "e176", nome: "LUZIANE T.", funcao: "Farmacêutico", lojaId: "7" },
+  { id: "e164", nome: "Luamin Isis Lantyer De Paula", funcao: "Balconista", lojaId: "8", ativo: false },
+  { id: "e168", nome: "Lucas Almeida De Oliveira", funcao: "Balconista", lojaId: "13", ativo: false },
+  { id: "e162", nome: "LÍVIA D.", funcao: "Caixa", lojaId: "18" },
+  { id: "e177", nome: "MAGALI D.", funcao: "Farmacêutico", lojaId: "20" },
+  { id: "e178", nome: "MAIANE M.", funcao: "Caixa", lojaId: "3" },
+  { id: "e179", nome: "MAIANE S.", funcao: "Farmacêutico", lojaId: "22" },
+  { id: "e182", nome: "MAILANY I.", funcao: "Caixa", lojaId: "4" },
+  { id: "e183", nome: "MAINARA L.", funcao: "Caixa", lojaId: "11" },
+  { id: "e184", nome: "MANUELE S.", funcao: "Farmacêutico", lojaId: "24" },
+  { id: "e185", nome: "MARCELO O.", funcao: "Caixa", lojaId: "30" },
+  { id: "e186", nome: "MARCIEL S.", funcao: "Balconista", lojaId: "13" },
+  { id: "e306", nome: "MARCIO L.", funcao: "Administrativo", lojaId: "9" },
+  { id: "e187", nome: "MARCOS R.", funcao: "Balconista", lojaId: "22" },
+  { id: "e188", nome: "MARIA C.", funcao: "Caixa", lojaId: "8" },
+  { id: "e190", nome: "MARIA E.", funcao: "Caixa", lojaId: "27" },
+  { id: "e307", nome: "MARIA E.", funcao: "Caixa", lojaId: "31" },
+  { id: "e191", nome: "MARIA L.", funcao: "Caixa", lojaId: "15" },
+  { id: "e192", nome: "MARIANA R.", funcao: "Balconista", lojaId: "19" },
+  { id: "e193", nome: "MARIANA S.", funcao: "Farmacêutico", lojaId: "25" },
+  { id: "e194", nome: "MARIELLE D.", funcao: "Balconista", lojaId: "13" },
+  { id: "e195", nome: "MARINA S.", funcao: "Caixa", lojaId: "7" },
+  { id: "e196", nome: "MARIZETE C.", funcao: "Balconista", lojaId: "10" },
+  { id: "e308", nome: "MARTA C.", funcao: "Balconista", lojaId: "20" },
+  { id: "e197", nome: "MATHEUS S.", funcao: "Balconista", lojaId: "17" },
+  { id: "e198", nome: "MAYANA D.", funcao: "Balconista", lojaId: "16" },
+  { id: "e199", nome: "MAYARA S.", funcao: "Balconista", lojaId: "19" },
+  { id: "e200", nome: "MICHELE Q.", funcao: "Balconista", lojaId: "21" },
+  { id: "e309", nome: "MINEIA A.", funcao: "Farmacêutico", lojaId: "9" },
+  { id: "e201", nome: "MIRELE S.", funcao: "Balconista", lojaId: "6" },
+  { id: "e202", nome: "MIRLENE S.", funcao: "Balconista", lojaId: "4" },
+  { id: "e203", nome: "MONICA A.", funcao: "Balconista", lojaId: "2" },
+  { id: "e204", nome: "MONICA B.", funcao: "Balconista", lojaId: "2" },
+  { id: "e205", nome: "MONICA T.", funcao: "Balconista", lojaId: "15" },
+  { id: "e180", nome: "Maiara Rebeca Lima Silva", funcao: "Caixa", lojaId: "10", ativo: false },
+  { id: "e181", nome: "Maike Trindade Da Silva Santos", funcao: "Balconista", lojaId: "26", ativo: false },
+  { id: "e189", nome: "Maria Eduarda Alves Morais", funcao: "Balconista", lojaId: "15", ativo: false },
+  { id: "e206", nome: "NAIARA L.", funcao: "Balconista", lojaId: "30" },
+  { id: "e207", nome: "NATALE C.", funcao: "Balconista", lojaId: "29" },
+  { id: "e208", nome: "NATIEL F.", funcao: "Balconista", lojaId: "25" },
+  { id: "e209", nome: "NAYANA D.", funcao: "Balconista", lojaId: "6" },
+  { id: "e210", nome: "OSMAR D.", funcao: "Balconista", lojaId: "7" },
+  { id: "e211", nome: "OTACILIA S.", funcao: "Caixa", lojaId: "4" },
+  { id: "e212", nome: "PABLO H.", funcao: "Caixa", lojaId: "21" },
+  { id: "e213", nome: "PATRICIA D.", funcao: "Caixa", lojaId: "26" },
+  { id: "e214", nome: "PAULA K.", funcao: "Caixa", lojaId: "25" },
+  { id: "e215", nome: "PAULA R.", funcao: "Balconista", lojaId: "14" },
+  { id: "e216", nome: "PAULA S.", funcao: "Caixa", lojaId: "19" },
+  { id: "e217", nome: "PAULO H.", funcao: "Balconista", lojaId: "8" },
+  { id: "e218", nome: "PEDRO P.", funcao: "Caixa", lojaId: "18" },
+  { id: "e219", nome: "RAFAEL L.", funcao: "Balconista", lojaId: "30" },
+  { id: "e221", nome: "RAFAELA F.", funcao: "Caixa", lojaId: "4" },
+  { id: "e222", nome: "RAIANE E.", funcao: "Caixa", lojaId: "17" },
+  { id: "e223", nome: "RAILANE D.", funcao: "Caixa", lojaId: "27" },
+  { id: "e224", nome: "RAIMUNDA D.", funcao: "Caixa", lojaId: "13" },
+  { id: "e225", nome: "RAISSA E.", funcao: "Caixa", lojaId: "6" },
+  { id: "e226", nome: "RAQUEL D.", funcao: "Balconista", lojaId: "26" },
+  { id: "e227", nome: "RAYANE C.", funcao: "Balconista", lojaId: "12" },
+  { id: "e228", nome: "REBECA N.", funcao: "Caixa", lojaId: "22" },
+  { id: "e229", nome: "REIJANE S.", funcao: "Balconista", lojaId: "29" },
+  { id: "e230", nome: "REJANE D.", funcao: "Balconista", lojaId: "19" },
+  { id: "e310", nome: "RENAN D.", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e231", nome: "RHAIZA R.", funcao: "Caixa", lojaId: "5" },
+  { id: "e232", nome: "RIGELMA D.", funcao: "Balconista", lojaId: "8" },
+  { id: "e233", nome: "RODRIGO F.", funcao: "Balconista", lojaId: "28" },
+  { id: "e234", nome: "ROMÁRIO G.", funcao: "Balconista", lojaId: "12" },
+  { id: "e235", nome: "ROSENI Q.", funcao: "Balconista", lojaId: "18" },
+  { id: "e236", nome: "ROSIANE L.", funcao: "Balconista", lojaId: "19" },
+  { id: "e237", nome: "ROSICLEIDE P.", funcao: "Balconista", lojaId: "15" },
+  { id: "e311", nome: "ROSIMARE M.", funcao: "Administrativo", lojaId: "9" },
+  { id: "e312", nome: "ROSIMEIRE D.", funcao: "Balconista", lojaId: "24" },
+  { id: "e238", nome: "RYAN D.", funcao: "Caixa", lojaId: "24" },
+  { id: "e220", nome: "Rafael Santos Da Silva", funcao: "Caixa", lojaId: "30", ativo: false },
+  { id: "e239", nome: "SAMANTA C.", funcao: "Caixa", lojaId: "16" },
+  { id: "e313", nome: "SAMANTA D.", funcao: "Caixa", lojaId: "14" },
+  { id: "e240", nome: "SANDRO B.", funcao: "Balconista", lojaId: "18" },
+  { id: "e241", nome: "SELMA P.", funcao: "Balconista", lojaId: "8" },
+  { id: "e242", nome: "SHELLDA B.", funcao: "Balconista", lojaId: "1" },
+  { id: "e243", nome: "SILVANA D.", funcao: "Balconista", lojaId: "17" },
+  { id: "e244", nome: "SILVANA S.", funcao: "Balconista", lojaId: "29" },
+  { id: "e245", nome: "SILVIA D.", funcao: "Balconista", lojaId: "1" },
+  { id: "e246", nome: "SUELEM D.", funcao: "Balconista", lojaId: "30" },
+  { id: "e247", nome: "TAIALA D.", funcao: "Farmacêutico", lojaId: "15" },
+  { id: "e248", nome: "TAILAN D.", funcao: "Caixa", lojaId: "7" },
+  { id: "e249", nome: "TAINA C.", funcao: "Balconista", lojaId: "25" },
+  { id: "e250", nome: "TAINA N.", funcao: "Balconista", lojaId: "13" },
+  { id: "e251", nome: "TAINÃ P.", funcao: "Caixa", lojaId: "19" },
+  { id: "e252", nome: "TAIS L.", funcao: "Balconista", lojaId: "18" },
+  { id: "e253", nome: "TAMIRES C.", funcao: "Caixa", lojaId: "5" },
+  { id: "e254", nome: "TAMIRES S.", funcao: "Balconista", lojaId: "16" },
+  { id: "e255", nome: "TATIANE D.", funcao: "Balconista", lojaId: "4" },
+  { id: "e256", nome: "TATYANE S.", funcao: "Farmacêutico", lojaId: "17" },
+  { id: "e257", nome: "THAIS B.", funcao: "Balconista", lojaId: "23" },
+  { id: "e258", nome: "THALITA D.", funcao: "Caixa", lojaId: "14" },
+  { id: "e259", nome: "THAYNA S.", funcao: "Caixa", lojaId: "1" },
+  { id: "e260", nome: "TOMAZ A.", funcao: "Balconista", lojaId: "23" },
+  { id: "e261", nome: "VALDIONE L.", funcao: "Caixa", lojaId: "16" },
+  { id: "e262", nome: "VANDEVAL D.", funcao: "Balconista", lojaId: "12" },
+  { id: "e263", nome: "VANESSA A.", funcao: "Balconista", lojaId: "2" },
+  { id: "e264", nome: "VANESSA C.", funcao: "Balconista", lojaId: "20" },
+  { id: "e265", nome: "VANUZA S.", funcao: "Caixa", lojaId: "19" },
+  { id: "e266", nome: "VERONICE V.", funcao: "Balconista", lojaId: "10" },
+  { id: "e267", nome: "VITORIA G.", funcao: "Caixa", lojaId: "12" },
+  { id: "e268", nome: "WENDEL S.", funcao: "Caixa", lojaId: "31" },
+  { id: "e269", nome: "YASMIN D.", funcao: "Caixa", lojaId: "11" },
+  { id: "e270", nome: "YASMIN M.", funcao: "Balconista", lojaId: "4" },
+];
+
+const MESES = [
+  { id: '2026-05', label: 'Maio/2026', semanas: 4 },
+  { id: '2026-06', label: 'Junho/2026', semanas: 4 },
+  { id: '2026-07', label: 'Julho/2026', semanas: 3 },
+];
+
+/* PRNG determinístico simples para gerar dados de exemplo estáveis */
+function mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function hashStr(s) { let h = 0; for (let i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) | 0; } return h; }
+
+/* Alguns critérios comuns fazem mais sentido com outro nome para funções
+   específicas (ex.: "Atendimento ao cliente" não se aplica bem a quem
+   trabalha no Centro de Distribuição). O id do critério permanece o mesmo
+   (as notas continuam salvas sob a mesma chave), só o texto exibido muda. */
+const CRITERIOS_LABEL_OVERRIDE_POR_FUNCAO = {
+  'Auxiliar de Logística': { atendimento: 'Produtividade' },
+};
+
+function criteriosDaFuncao(funcao) {
+  const base = [...CRITERIOS_COMUNS, ...(CRITERIOS_FUNCAO[funcao] || [])];
+  const overrides = CRITERIOS_LABEL_OVERRIDE_POR_FUNCAO[funcao];
+  if (!overrides) return base;
+  return base.map((c) => (overrides[c.id] ? { ...c, label: overrides[c.id] } : c));
+}
+
+function gerarNotaCriterio(rand, bias) {
+  const v = bias + (rand() - 0.5) * 1.6;
+  return Math.max(1, Math.min(5, Math.round(v)));
+}
+
+function mediaObj(scores) {
+  const vals = Object.values(scores);
+  if (!vals.length) return 0;
+  return vals.reduce((a, b) => a + b, 0) / vals.length;
+}
+
+function classificar(nota5) {
+  if (nota5 >= 4.5) return { label: 'Excelente', cor: 'emerald' };
+  if (nota5 >= 3.5) return { label: 'Bom', cor: 'blue' };
+  if (nota5 >= 2.5) return { label: 'Regular', cor: 'amber' };
+  return { label: 'Necessita desenvolvimento', cor: 'red' };
+}
+
+const COR_CLASSES = {
+  emerald: { bg: 'bg-emerald-500/15', text: 'text-emerald-400', ring: 'ring-emerald-500/30', solid: 'bg-emerald-500', chart: '#34d399' },
+  blue: { bg: 'bg-blue-500/15', text: 'text-blue-400', ring: 'ring-blue-500/30', solid: 'bg-blue-500', chart: '#60a5fa' },
+  amber: { bg: 'bg-amber-500/15', text: 'text-amber-400', ring: 'ring-amber-500/30', solid: 'bg-amber-500', chart: '#fbbf24' },
+  red: { bg: 'bg-red-500/15', text: 'text-red-400', ring: 'ring-red-500/30', solid: 'bg-red-500', chart: '#f87171' },
+  yellow: { bg: 'bg-yellow-500/15', text: 'text-yellow-400', ring: 'ring-yellow-500/30', solid: 'bg-yellow-500', chart: '#facc15' },
+  orange: { bg: 'bg-orange-500/15', text: 'text-orange-400', ring: 'ring-orange-500/30', solid: 'bg-orange-500', chart: '#fb923c' },
+};
+
+/* ============================= DIAGNÓSTICO INTELIGENTE DE DESENVOLVIMENTO ============================= */
+/* Módulo adicional e independente: analisa notas 1-2 por critério e gera um parecer dinâmico
+   (causas, impacto, plano de ação, fundamentação e resumo executivo). Não altera cálculos,
+   layout ou dados existentes — apenas lê `scores` já salvos. */
+
+const CONTEUDO_DIAGNOSTICO = {
+  pontualidade: {
+    causas: [
+      'Pode indicar dificuldades de deslocamento ou transporte até a loja',
+      'É importante investigar a organização pessoal da rotina diária',
+      'Uma possível causa é a gestão inadequada do tempo entre compromissos',
+      'Pode estar relacionado a baixo comprometimento com os horários definidos',
+      'Vale verificar se há alinhamento claro das expectativas de horário com a liderança',
+      'Pode indicar questões pessoais momentâneas que afetam a rotina',
+      'É importante investigar sinais de desmotivação com a função ou o ambiente',
+    ],
+    impactos: ['Produtividade da equipe', 'Atendimento ao cliente em horários de pico', 'Cobertura adequada da escala', 'Cumprimento dos horários de abertura/fechamento', 'Clima entre colegas que cobrem ausências'],
+    fundamentacao: 'a Administração Comportamental, que associa a regularidade da presença à previsibilidade da operação e à confiança da equipe na escala',
+  },
+  atendimento: {
+    causas: [
+      'Pode indicar lacunas na comunicação com o cliente',
+      'É importante investigar o nível de conhecimento sobre produtos e procedimentos',
+      'Uma possível causa é a dificuldade em lidar com situações de pressão operacional',
+      'Pode estar relacionado a baixa inteligência emocional em momentos de conflito',
+      'Vale verificar se houve treinamento adequado sobre padrões de atendimento',
+      'Pode indicar baixa empatia percebida pelo cliente',
+      'É importante investigar o volume de demanda em relação ao efetivo disponível',
+    ],
+    impactos: ['Satisfação e fidelização do cliente', 'Reputação da loja e da rede', 'Reclamações e tempo de resolução', 'Indicadores comerciais', 'Clima entre equipe e liderança'],
+    fundamentacao: 'a Gestão por Competências, que trata o atendimento como uma competência comportamental treinável e mensurável ao longo do tempo',
+  },
+  equipe: {
+    causas: [
+      'Pode indicar dificuldades de comunicação entre colegas',
+      'É importante investigar conflitos interpessoais não resolvidos',
+      'Uma possível causa é uma postura mais individualista diante das tarefas',
+      'Pode estar relacionado à falta de integração com o restante da equipe',
+      'Vale verificar o estilo de liderança e o nível de coesão do grupo',
+      'Pode indicar divergência sobre papéis e responsabilidades dentro da loja',
+      'É importante investigar se há reconhecimento adequado das contribuições individuais',
+    ],
+    impactos: ['Clima organizacional da loja', 'Qualidade da comunicação interna', 'Cobertura mútua em picos de demanda', 'Resolução colaborativa de problemas', 'Retenção de talentos na equipe'],
+    fundamentacao: 'o Desenvolvimento Organizacional, que enxerga a cooperação entre pares como um dos pilares da maturidade de um time',
+  },
+  normas: {
+    causas: [
+      'Pode indicar falta de treinamento adequado sobre os procedimentos vigentes',
+      'É importante investigar o desconhecimento de normas atualizadas',
+      'Uma possível causa é a negligência pontual em situações de rotina',
+      'Pode estar relacionado a uma supervisão insuficiente no dia a dia',
+      'Vale verificar sinais de resistência a regras percebidas como excessivas',
+      'Pode indicar sobrecarga que leva à omissão de etapas do processo',
+      'É importante investigar se os procedimentos estão claros e acessíveis',
+    ],
+    impactos: ['Conformidade regulatória e segurança operacional', 'Auditorias e processos internos', 'Segurança do cliente/paciente', 'Padronização entre lojas da rede', 'Exposição a riscos legais e sanitários'],
+    fundamentacao: 'o PDCA, cujo ciclo de padronização e verificação depende diretamente da aderência da equipe aos procedimentos estabelecidos',
+  },
+  organizacao: {
+    causas: [
+      'Pode indicar falta de método na execução das tarefas do dia a dia',
+      'É importante investigar a priorização inadequada de atividades',
+      'Uma possível causa é a desatenção em momentos de maior movimento',
+      'Pode estar relacionado à sobrecarga de funções acumuladas',
+      'Vale verificar a ausência de padronização nos processos da loja',
+      'Pode indicar falta de clareza sobre os padrões esperados de organização',
+    ],
+    impactos: ['Eficiência operacional da loja', 'Experiência de compra do cliente', 'Controle e localização de produtos', 'Segurança e prevenção de acidentes', 'Produtividade da equipe'],
+    fundamentacao: 'a Melhoria Contínua, que trata a organização do ambiente como base para ganhos sustentáveis de eficiência operacional',
+  },
+  tecnica: {
+    causas: [
+      'Pode indicar sobrecarga de atendimentos simultâneos',
+      'É importante investigar lacunas de atualização técnica ou farmacológica',
+      'Uma possível causa é a desatenção pontual em momentos de alta demanda',
+      'Pode estar relacionado à falta de padronização no processo de conferência',
+      'Vale verificar se há tempo adequado destinado à análise de cada receita',
+      'Pode indicar necessidade de reforço em capacitação técnica específica',
+    ],
+    impactos: ['Segurança do paciente', 'Conformidade regulatória (sanitária/farmacêutica)', 'Risco de erros de dispensação', 'Credibilidade técnica da farmácia', 'Auditorias e fiscalizações'],
+    fundamentacao: 'a Gestão por Competências técnicas, essencial em funções regulamentadas que exigem precisão e responsabilidade sanitária',
+  },
+  orientacao: {
+    causas: [
+      'Pode indicar dificuldade de comunicação técnica em linguagem acessível',
+      'É importante investigar o nível de atualização sobre os produtos disponíveis',
+      'Uma possível causa é o tempo limitado por cliente em dias de grande movimento',
+      'Pode estar relacionado à insegurança em orientar sobre determinados medicamentos',
+      'Vale verificar se há apoio de materiais de consulta rápida na loja',
+      'Pode indicar necessidade de reforço em treinamento de comunicação com o cliente',
+    ],
+    impactos: ['Segurança e adesão do paciente ao tratamento', 'Confiança do cliente na farmácia', 'Diferenciação competitiva do atendimento farmacêutico', 'Redução de dúvidas e devoluções', 'Reputação técnica da loja'],
+    fundamentacao: 'a Liderança Situacional aplicada ao atendimento, que recomenda adaptar a comunicação técnica ao perfil e à necessidade de cada cliente',
+  },
+  produtos: {
+    causas: [
+      'Pode indicar treinamento insuficiente sobre o portfólio da loja',
+      'É importante investigar a rotatividade de produtos e a frequência de atualização',
+      'Uma possível causa é a falta de tempo dedicado a estudo e reciclagem',
+      'Pode estar relacionado à baixa exposição a determinadas categorias de produto',
+      'Vale verificar o acesso a materiais de apoio e catálogos atualizados',
+      'Pode indicar baixo engajamento com treinamentos oferecidos pela empresa',
+    ],
+    impactos: ['Qualidade da indicação ao cliente', 'Vendas cruzadas e ticket médio', 'Satisfação e confiança do cliente', 'Redução de trocas por indicação inadequada', 'Imagem de especialização da loja'],
+    fundamentacao: 'a Gestão por Competências técnicas de produto, que trata o conhecimento do portfólio como base para um atendimento consultivo',
+  },
+  agilidade_atendimento: {
+    causas: [
+      'Pode indicar dificuldade de priorização em momentos de fila',
+      'É importante investigar o domínio dos sistemas e processos internos',
+      'Uma possível causa é a insegurança técnica que gera lentidão',
+      'Pode estar relacionado ao dimensionamento da equipe em horários de pico',
+      'Vale verificar se os processos internos estão otimizados',
+      'Pode indicar necessidade de reforço em treinamento operacional',
+    ],
+    impactos: ['Tempo de espera do cliente', 'Fluxo de atendimento em horários de pico', 'Percepção de eficiência da loja', 'Produtividade da equipe', 'Satisfação geral do cliente'],
+    fundamentacao: 'o PDCA aplicado ao fluxo de atendimento, no qual a agilidade é resultado direto da padronização e do domínio dos processos',
+  },
+  precisao_caixa: {
+    causas: [
+      'Pode indicar falta de atenção em momentos de alto volume de transações',
+      'É importante investigar o domínio do sistema de caixa utilizado',
+      'Uma possível causa é o cansaço acumulado ao longo do turno',
+      'Pode estar relacionado à necessidade de reforço em treinamento operacional',
+      'Vale verificar se os procedimentos de conferência estão claros',
+      'Pode indicar pressão de tempo que compromete a atenção aos detalhes',
+    ],
+    impactos: ['Confiabilidade do fechamento de caixa', 'Controle financeiro da loja', 'Risco de divergências e perdas', 'Auditorias internas', 'Confiança da liderança na operação do caixa'],
+    fundamentacao: 'a Administração Comportamental aplicada a rotinas de alta repetição, nas quais a atenção sustentada é determinante para a precisão',
+  },
+  agilidade_fechamento: {
+    causas: [
+      'Pode indicar dificuldade de organização no fechamento do turno',
+      'É importante investigar o domínio dos procedimentos de fechamento',
+      'Uma possível causa é o volume de clientes em horários de pico',
+      'Pode estar relacionado à necessidade de reforço em treinamento sobre o sistema',
+      'Vale verificar o dimensionamento da equipe no fechamento da loja',
+      'Pode indicar acúmulo de tarefas administrativas no fim do turno',
+    ],
+    impactos: ['Tempo de espera na fila do caixa', 'Pontualidade no fechamento da loja', 'Produtividade no encerramento do turno', 'Satisfação do cliente no último atendimento', 'Organização do processo de fechamento'],
+    fundamentacao: 'a Melhoria Contínua aplicada a rotinas de encerramento, buscando reduzir gargalos recorrentes no fechamento do turno',
+  },
+};
+
+function gerarDiagnosticoParagrafo_(label, nota, funcao) {
+  const grave = nota <= 1.5;
+  const abertura = grave
+    ? `A avaliação aponta uma necessidade relevante de desenvolvimento em ${label}`
+    : `A avaliação demonstra uma oportunidade de desenvolvimento em ${label}`;
+  return `${abertura}. Quando esse comportamento ocorre de forma recorrente, pode impactar a organização das atividades, a produtividade da equipe e a experiência dos clientes, especialmente na rotina de um(a) ${funcao}.`;
+}
+
+function calcularPrioridadeCriterio_(nota) {
+  if (nota <= 1.5) return { label: 'Prioridade Alta', emoji: '🟠', cor: 'orange' };
+  return { label: 'Prioridade Média', emoji: '🟡', cor: 'yellow' };
+}
+
+function calcularPrioridadeGeral_(criteriosBaixos, totalAbaixoDe3) {
+  if (totalAbaixoDe3 >= 5) return { label: 'Atenção Imediata', emoji: '🚨', cor: 'red', prazo: 30 };
+  const notasCriticas = criteriosBaixos.filter((c) => c.nota <= 2).length;
+  if (notasCriticas >= 3) return { label: 'Prioridade Crítica', emoji: '🔴', cor: 'red', prazo: 30 };
+  if (criteriosBaixos.some((c) => c.nota <= 1.5)) return { label: 'Prioridade Alta', emoji: '🟠', cor: 'orange', prazo: 45 };
+  if (criteriosBaixos.length > 0) return { label: 'Prioridade Média', emoji: '🟡', cor: 'yellow', prazo: 60 };
+  return null;
+}
+
+function gerarPlanoAcao_(prioridade) {
+  const plano = [
+    'Realizar uma conversa de feedback individual, em local reservado',
+    'Investigar junto ao colaborador a possível causa raiz',
+    'Definir metas claras e mensuráveis para o próximo ciclo',
+    'Acompanhar semanalmente a evolução do comportamento',
+    'Registrar formalmente a evolução observada nas próximas avaliações',
+    'Oferecer orientação prática e, se necessário, treinamento específico',
+  ];
+  if (prioridade && (prioridade.label === 'Prioridade Crítica' || prioridade.label === 'Atenção Imediata')) {
+    plano.push('Formalizar um Plano de Desenvolvimento Individual (PDI) com metas e prazos definidos');
+  }
+  plano.push(`Reavaliar formalmente em até ${prioridade ? prioridade.prazo : 60} dias`);
+  return plano;
+}
+
+/* ============================= INTEGRAÇÃO COM GOOGLE SHEETS (APPS SCRIPT) ============================= */
+
+// Faz o parse da resposta com segurança. Se a implantação do Apps Script
+// estiver desatualizada, com acesso restrito, ou a URL estiver errada, o
+// Google costuma responder com uma página HTML (ex.: tela de login) em vez
+// de JSON. Sem esse tratamento, isso vira um erro genérico tipo
+// "Unexpected token < in JSON" que não diz nada sobre a causa real.
+async function parseRespostaApi_(resp) {
+  const texto = await resp.text();
+  let json;
+  try {
+    json = JSON.parse(texto);
+  } catch (e) {
+    throw new Error(
+      `A API não retornou JSON válido (status HTTP ${resp.status}). ` +
+      'Isso normalmente indica que: (1) a implantação do Apps Script está ' +
+      'desatualizada — edite o Code.gs e crie uma NOVA implantação (não basta salvar); ' +
+      '(2) o acesso da implantação não está como "Qualquer pessoa"; ou ' +
+      '(3) CONFIG.API_URL não é a URL da implantação mais recente. ' +
+      `Início da resposta recebida: "${texto.slice(0, 150)}"`
+    );
+  }
+  return json;
+}
+
+async function apiCarregarAvaliacoes() {
+  // cache: 'no-store' + timestamp evitam que o navegador reutilize uma resposta
+  // antiga (ex.: vazia) da mesma URL em vez de buscar os dados atuais da planilha.
+  const resp = await fetch(`${CONFIG.API_URL}?_=${Date.now()}`, { method: 'GET', cache: 'no-store' });
+  const json = await parseRespostaApi_(resp);
+  if (!json.ok) throw new Error(json.erro || 'Falha ao carregar avaliações.');
+  return json.avaliacoes;
+}
+
+async function apiSalvarAvaliacao(avaliacao) {
+  // Envio como text/plain evita o preflight OPTIONS, que o Apps Script não trata bem.
+  const resp = await fetch(CONFIG.API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(avaliacao),
+  });
+  const json = await parseRespostaApi_(resp);
+  if (!json.ok) throw new Error(json.erro || 'Falha ao salvar avaliação.');
+  return json.avaliacao;
+}
+
+/* ============================= COMPONENTES ============================= */
+
+function StarScore({ value, onChange }) {
+  return (
+    <div className="flex gap-2">
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button
+          type="button"
+          key={n}
+          onClick={() => onChange(n)}
+          className={`score-btn w-11 h-11 rounded-xl border text-sm font-semibold flex items-center justify-center
+            ${value === n
+              ? 'bg-indigo-500 border-indigo-400 text-white shadow-lg shadow-indigo-500/30'
+              : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:border-indigo-400 hover:text-indigo-300'}`}
+          title={ESCALA_LABELS[n]}
+        >
+          {n}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Badge({ cor, children }) {
+  const c = COR_CLASSES[cor];
+  return (
+    <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ring-1 ${c.bg} ${c.text} ${c.ring} whitespace-nowrap`}>
+      {children}
+    </span>
+  );
+}
+
+function SyncStatus({ status, erro, onRetry }) {
+  if (status === 'syncing') {
+    return <span className="text-xs text-slate-400 flex items-center gap-1.5 px-2">⏳ Sincronizando...</span>;
+  }
+  if (status === 'erro') {
+    return (
+      <button onClick={onRetry} title={erro} className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1.5 px-2 underline decoration-dotted">
+        ⚠️ Erro de sincronização — tentar de novo
+      </button>
+    );
+  }
+  if (status === 'ok') {
+    return <span className="text-xs text-emerald-400 flex items-center gap-1.5 px-2">✅ Sincronizado</span>;
+  }
+  return null;
+}
+
+function KpiCard({ label, value, sub, cor }) {
+  const c = cor ? COR_CLASSES[cor] : null;
+  return (
+    <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 flex flex-col gap-1">
+      <span className="text-xs uppercase tracking-wide text-slate-400">{label}</span>
+      <span className={`text-2xl font-bold ${c ? c.text : 'text-white'}`}>{value}</span>
+      {sub && <span className="text-xs text-slate-500">{sub}</span>}
+    </div>
+  );
+}
+
+function LineChart({ labels, data, id }) {
+  const ref = useRef(null);
+  const chartRef = useRef(null);
+  useEffect(() => {
+    if (chartRef.current) chartRef.current.destroy();
+    chartRef.current = new Chart(ref.current, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Média mensal da loja',
+          data,
+          borderColor: '#818cf8',
+          backgroundColor: 'rgba(129,140,248,0.15)',
+          tension: 0.35,
+          fill: true,
+          pointBackgroundColor: '#818cf8',
+          pointRadius: 4,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          y: { min: 0, max: 5, ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } },
+          x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
+        },
+        plugins: { legend: { display: false } },
+      },
+    });
+    return () => chartRef.current && chartRef.current.destroy();
+  }, [labels.join(','), data.join(',')]);
+  return <canvas ref={ref} id={id} height="220"></canvas>;
+}
+
+function BarChart({ labels, data, colors, id }) {
+  const ref = useRef(null);
+  const chartRef = useRef(null);
+  useEffect(() => {
+    if (chartRef.current) chartRef.current.destroy();
+    chartRef.current = new Chart(ref.current, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Média por função',
+          data,
+          backgroundColor: colors,
+          borderRadius: 8,
+          maxBarThickness: 60,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          y: { min: 0, max: 5, ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } },
+          x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
+        },
+        plugins: { legend: { display: false } },
+      },
+    });
+    return () => chartRef.current && chartRef.current.destroy();
+  }, [labels.join(','), data.join(',')]);
+  return <canvas ref={ref} id={id} height="220"></canvas>;
+}
+
+/* ============================= MODAL DE AVALIAÇÃO SEMANAL ============================= */
+
+function ModalAvaliacao({ funcionario, mes, semana, existente, onClose, onSave }) {
+  const criterios = criteriosDaFuncao(funcionario.funcao);
+  const [scores, setScores] = useState(existente ? { ...existente.scores } : {});
+  const [gestor, setGestor] = useState(existente ? existente.gestor : '');
+  const [observacao, setObservacao] = useState(existente ? existente.observacao : '');
+  const [data, setData] = useState(existente ? existente.data : new Date().toISOString().slice(0, 10));
+  const [salvando, setSalvando] = useState(false);
+  const [erroSalvar, setErroSalvar] = useState('');
+
+  const preenchido = criterios.every((c) => scores[c.id]);
+  const media = preenchido ? mediaObj(scores) : 0;
+
+  async function handleSalvar() {
+    setSalvando(true);
+    setErroSalvar('');
+    try {
+      await onSave({ scores, gestor, observacao, data });
+    } catch (err) {
+      setErroSalvar(err.message || 'Erro ao salvar. Verifique sua conexão e tente novamente.');
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4 no-print">
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto fade-in">
+        <div className="p-5 border-b border-slate-800 flex items-center justify-between sticky top-0 bg-slate-900 z-10">
+          <div>
+            <h3 className="font-bold text-lg">{funcionario.nome}</h3>
+            <p className="text-xs text-slate-400">{funcionario.funcao} · Semana {semana} · {mes}</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none">×</button>
+        </div>
+
+        <div className="p-5 space-y-5">
+          {criterios.map((c) => (
+            <div key={c.id}>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm font-medium text-slate-200">{c.label}</label>
+                {scores[c.id] && <span className="text-xs text-slate-400">{ESCALA_LABELS[scores[c.id]]}</span>}
+              </div>
+              <StarScore value={scores[c.id]} onChange={(v) => setScores({ ...scores, [c.id]: v })} />
+            </div>
+          ))}
+
+          <div className="grid grid-cols-2 gap-3 pt-2">
+            <div>
+              <label className="text-xs text-slate-400">Data da avaliação</label>
+              <input type="date" value={data} onChange={(e) => setData(e.target.value)}
+                className="mt-1 w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label className="text-xs text-slate-400">Responsável (gestor)</label>
+              <input type="text" value={gestor} onChange={(e) => setGestor(e.target.value)} placeholder="Nome do gestor"
+                className="mt-1 w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm" />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs text-slate-400">Observação (opcional)</label>
+            <textarea value={observacao} onChange={(e) => setObservacao(e.target.value)} rows={3}
+              placeholder="Comentários adicionais sobre o desempenho na semana..."
+              className="mt-1 w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm resize-none" />
+          </div>
+
+          {preenchido && (
+            <div className="bg-slate-800/60 rounded-xl p-3 flex items-center justify-between">
+              <span className="text-sm text-slate-300">Média da semana</span>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-lg">{media.toFixed(1)}</span>
+                <Badge cor={classificar(media).cor}>{classificar(media).label}</Badge>
+              </div>
+            </div>
+          )}
+          <DiagnosticoSemanaAtual funcionario={funcionario} mes={mes} semana={semana} scores={scores} />
+          {erroSalvar && (
+            <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-xs rounded-lg p-3">
+              ⚠️ {erroSalvar}
+            </div>
+          )}
+        </div>
+
+        <div className="p-5 border-t border-slate-800 flex justify-end gap-2 sticky bottom-0 bg-slate-900">
+          <button onClick={onClose} disabled={salvando} className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:bg-slate-800 disabled:opacity-50">Cancelar</button>
+          <button
+            disabled={!preenchido || !gestor || salvando}
+            onClick={handleSalvar}
+            className={`px-4 py-2 rounded-lg text-sm font-semibold ${preenchido && gestor && !salvando ? 'bg-indigo-500 hover:bg-indigo-400 text-white' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}`}
+          >
+            {salvando ? 'Salvando...' : 'Salvar avaliação'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================= MODAL HISTÓRICO ============================= */
+
+function ModalHistorico({ funcionario, avaliacoes, onClose }) {
+  const registros = avaliacoes
+    .filter((a) => a.funcionarioId === funcionario.id)
+    .sort((a, b) => (a.mes + a.semana).localeCompare(b.mes + b.semana));
+
+  const porMes = {};
+  registros.forEach((r) => {
+    const m = mediaObj(r.scores);
+    if (!porMes[r.mes]) porMes[r.mes] = [];
+    porMes[r.mes].push({ semana: r.semana, media: m });
+  });
+
+  return (
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4 no-print">
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-xl max-h-[85vh] overflow-y-auto fade-in">
+        <div className="p-5 border-b border-slate-800 flex items-center justify-between sticky top-0 bg-slate-900">
+          <div>
+            <h3 className="font-bold text-lg">Histórico — {funcionario.nome}</h3>
+            <p className="text-xs text-slate-400">{funcionario.funcao}</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none">×</button>
+        </div>
+        <div className="p-5 space-y-4">
+          {Object.keys(porMes).length === 0 && <p className="text-sm text-slate-400">Nenhuma avaliação registrada.</p>}
+          {Object.entries(porMes).map(([mes, semanas]) => {
+            const mediaMes = semanas.reduce((a, s) => a + s.media, 0) / semanas.length;
+            const cls = classificar(mediaMes);
+            return (
+              <div key={mes} className="bg-slate-800/50 rounded-xl p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-semibold text-sm">{MESES.find(m => m.id === mes)?.label || mes}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold">{mediaMes.toFixed(1)} / 5</span>
+                    <Badge cor={cls.cor}>{cls.label}</Badge>
+                  </div>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  {semanas.sort((a, b) => a.semana - b.semana).map((s) => (
+                    <span key={s.semana} className="text-xs bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-slate-300">
+                      S{s.semana}: {s.media.toFixed(1)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          <AnaliseHistoricaDesenvolvimento funcionario={funcionario} registros={registros} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================= PAINEL DE DIAGNÓSTICO INTELIGENTE ============================= */
+/* Componente de apresentação, reutilizado em dois contextos:
+   - DiagnosticoSemanaAtual: segue exatamente o mês/semana que o gestor está vendo/editando
+     (mesmos filtros e médias da tela).
+   - AnaliseHistoricaDesenvolvimento: painel separado, com visão histórica (mês mais recente
+     com dados), para quem quiser uma leitura de evolução em vez do período pontual. */
+
+function PainelDiagnosticoDesenvolvimento({ titulo, funcionario, mediaPorCriterio }) {
+  if (!mediaPorCriterio || mediaPorCriterio.length === 0) return null;
+
+  const criteriosBaixos = mediaPorCriterio.filter((c) => c.nota <= 2.4);
+  const totalAbaixoDe3 = mediaPorCriterio.filter((c) => c.nota < 3).length;
+  const pontosFortes = mediaPorCriterio.filter((c) => c.nota >= 4);
+
+  // Todas as notas preenchidas >= 4 → relatório de reconhecimento
+  if (criteriosBaixos.length === 0 && mediaPorCriterio.every((c) => c.nota >= 4)) {
+    return (
+      <div className="bg-gradient-to-br from-emerald-500/10 to-slate-800/50 border border-emerald-500/30 rounded-xl p-4 mt-2">
+        <h4 className="font-bold text-sm text-emerald-400 mb-2">🏆 Reconhecimento de Desempenho — {titulo}</h4>
+        <p className="text-xs text-slate-300 mb-3">
+          {funcionario.nome} apresentou desempenho consistentemente acima do esperado em todos os critérios avaliados
+          neste período, indicando maturidade na função de {funcionario.funcao} e alinhamento sólido com os padrões da loja.
+        </p>
+        <p className="text-[11px] font-semibold text-slate-400 mb-1">Competências consolidadas</p>
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {pontosFortes.map((c) => (
+            <span key={c.id} className="text-[11px] bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30 rounded-lg px-2 py-1">
+              {c.label} · {c.nota.toFixed(1)}
+            </span>
+          ))}
+        </div>
+        <p className="text-[11px] text-slate-400">
+          Recomenda-se reconhecer o desempenho junto à equipe, sustentar as práticas atuais e considerar o colaborador
+          para novas responsabilidades ou trilhas de desenvolvimento contínuo.
+        </p>
+      </div>
+    );
+  }
+
+  if (criteriosBaixos.length === 0) return null;
+
+  const prioridade = calcularPrioridadeGeral_(criteriosBaixos, totalAbaixoDe3);
+  const planoAcao = gerarPlanoAcao_(prioridade);
+  const corPrioridade = COR_CLASSES[prioridade.cor];
+
+  return (
+    <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-4 mt-2 space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h4 className="font-bold text-sm text-slate-200">📋 Diagnóstico Inteligente de Desenvolvimento — {titulo}</h4>
+        <span className={`text-[11px] font-semibold rounded-lg px-2 py-1 ring-1 ${corPrioridade.bg} ${corPrioridade.text} ${corPrioridade.ring}`}>
+          {prioridade.emoji} {prioridade.label}
+        </span>
+      </div>
+
+      {criteriosBaixos.map((c) => {
+        const conteudo = CONTEUDO_DIAGNOSTICO[c.id];
+        if (!conteudo) return null;
+        const prioridadeCriterio = calcularPrioridadeCriterio_(c.nota);
+        const corCriterio = COR_CLASSES[prioridadeCriterio.cor];
+        return (
+          <div key={c.id} className="border-t border-slate-700/60 pt-3 first:border-t-0 first:pt-0">
+            <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
+              <span className="text-xs font-semibold text-slate-200">
+                {c.label} <span className="text-slate-500 font-normal">({c.nota.toFixed(1)}/5)</span>
+              </span>
+              <span className={`text-[10px] rounded px-1.5 py-0.5 ${corCriterio.bg} ${corCriterio.text}`}>
+                {prioridadeCriterio.emoji} {prioridadeCriterio.label}
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mb-2">
+              <span className="text-slate-500">⚠ Diagnóstico — </span>
+              {gerarDiagnosticoParagrafo_(c.label, c.nota, funcionario.funcao)}
+            </p>
+            <p className="text-[11px] font-semibold text-slate-500 mb-1">🔍 Possíveis causas</p>
+            <ul className="text-[11px] text-slate-400 list-disc list-inside mb-2 space-y-0.5">
+              {conteudo.causas.map((causa, i) => <li key={i}>{causa}</li>)}
+            </ul>
+            <p className="text-[11px] font-semibold text-slate-500 mb-1">📈 Impacto organizacional</p>
+            <div className="flex flex-wrap gap-1 mb-2">
+              {conteudo.impactos.map((imp, i) => (
+                <span key={i} className="text-[10px] bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-slate-400">{imp}</span>
+              ))}
+            </div>
+            <p className="text-[11px] text-slate-500">
+              <span className="font-semibold">📚 Fundamentação — </span>Com base em {conteudo.fundamentacao}.
+            </p>
+          </div>
+        );
+      })}
+
+      <div className="border-t border-slate-700/60 pt-3">
+        <p className="text-[11px] font-semibold text-slate-500 mb-1">✅ Plano de ação sugerido para o gestor</p>
+        <ul className="text-[11px] text-slate-400 list-disc list-inside space-y-0.5">
+          {planoAcao.map((a, i) => <li key={i}>{a}</li>)}
+        </ul>
+      </div>
+
+      <div className="border-t border-slate-700/60 pt-3">
+        <p className="text-[11px] font-semibold text-slate-300 mb-1.5">Resumo executivo</p>
+        <ul className="text-[11px] text-slate-400 space-y-1">
+          <li><span className="text-slate-500">Pontos fortes:</span> {pontosFortes.length ? pontosFortes.map((c) => c.label).join(', ') : 'nenhuma competência acima de 4,0 neste período'}</li>
+          <li><span className="text-slate-500">Oportunidades de melhoria:</span> {mediaPorCriterio.filter((c) => c.nota < 3).map((c) => c.label).join(', ') || '—'}</li>
+          <li><span className="text-slate-500">Competências prioritárias:</span> {criteriosBaixos.map((c) => c.label).join(', ')}</li>
+          <li><span className="text-slate-500">Grau geral de risco:</span> {prioridade.emoji} {prioridade.label}</li>
+          <li><span className="text-slate-500">Necessidade de acompanhamento:</span> Sim, recomenda-se acompanhamento próximo do gestor</li>
+          <li>
+            <span className="text-slate-500">Plano de Desenvolvimento Individual (PDI):</span>{' '}
+            {(prioridade.label === 'Prioridade Crítica' || prioridade.label === 'Atenção Imediata')
+              ? 'Recomendado, dado o número de competências abaixo do esperado'
+              : 'Não obrigatório neste momento; reavaliar conforme evolução'}
+          </li>
+          <li><span className="text-slate-500">Sugestão de nova avaliação:</span> Em até {prioridade.prazo} dias</li>
+        </ul>
+      </div>
+
+      <p className="text-[10px] text-slate-600 italic pt-1">
+        Diagnóstico gerado automaticamente a partir das notas registradas — serve como apoio à decisão do gestor,
+        não como conclusão definitiva sobre o colaborador.
+      </p>
+    </div>
+  );
+}
+
+/* Segue exatamente o mês e a semana que o gestor está vendo/editando neste modal —
+   mesma fonte de dados (`scores`) usada no card "Média da semana" logo acima. */
+function DiagnosticoSemanaAtual({ funcionario, mes, semana, scores }) {
+  const criterios = criteriosDaFuncao(funcionario.funcao);
+  const mediaPorCriterio = criterios
+    .filter((c) => scores[c.id] !== undefined && scores[c.id] !== null)
+    .map((c) => ({ ...c, nota: scores[c.id] }));
+
+  return (
+    <PainelDiagnosticoDesenvolvimento
+      titulo={`${mes} · Semana ${semana}`}
+      funcionario={funcionario}
+      mediaPorCriterio={mediaPorCriterio}
+    />
+  );
+}
+
+/* Painel separado (fora dos filtros do dashboard): visão histórica, usando a semana mais
+   recente registrada no histórico completo do colaborador — para quem quiser uma leitura
+   de evolução em vez do período pontual selecionado na tela. Usa a semana isoladamente
+   (não a média do mês), para não diluir uma semana ruim entre semanas boas. */
+function AnaliseHistoricaDesenvolvimento({ funcionario, registros }) {
+  if (registros.length === 0) return null;
+  const criterios = criteriosDaFuncao(funcionario.funcao);
+  const ultimoRegistro = registros[registros.length - 1]; // registros já vêm ordenados por mes+semana
+
+  const mediaPorCriterio = criterios
+    .filter((c) => ultimoRegistro.scores[c.id] !== undefined && ultimoRegistro.scores[c.id] !== null)
+    .map((c) => ({ ...c, nota: ultimoRegistro.scores[c.id] }));
+
+  const mesLabel = MESES.find((m) => m.id === ultimoRegistro.mes)?.label || ultimoRegistro.mes;
+
+  return (
+    <div>
+      <p className="text-[11px] text-slate-500 mb-1.5">
+        📊 Análise histórica — considera a semana mais recente registrada ({mesLabel} · Semana {ultimoRegistro.semana}), independente do filtro de mês selecionado no painel principal.
+      </p>
+      <PainelDiagnosticoDesenvolvimento
+        titulo={`Análise Histórica · ${mesLabel} · Semana ${ultimoRegistro.semana}`}
+        funcionario={funcionario}
+        mediaPorCriterio={mediaPorCriterio}
+      />
+    </div>
+  );
+}
+
+/* ============================= PAINEL DE EVOLUÇÃO TEMPORAL ============================= */
+/* Visão dos colaboradores (da loja/filtro selecionados) ao longo de TODOS os meses e semanas
+   já registrados na aba "Avaliacoes" — não só o mês em exibição na tabela principal. */
+
+function PainelEvolucaoTemporal({ funcionarios, avaliacoes }) {
+  const colunas = useMemo(() => (
+    MESES.flatMap((m) => Array.from({ length: m.semanas }, (_, i) => ({
+      key: `${m.id}-s${i + 1}`, mesId: m.id, semana: i + 1,
+    })))
+  ), []);
+
+  function celula(funcionarioId, coluna) {
+    const av = avaliacoes.find((a) => a.funcionarioId === funcionarioId && a.mes === coluna.mesId && a.semana === coluna.semana);
+    return av ? mediaObj(av.scores) : null;
+  }
+
+  return (
+    <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 mb-6 overflow-x-auto">
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <h3 className="text-sm font-semibold text-slate-300">📈 Evolução temporal — todos os meses e semanas</h3>
+        <p className="text-xs text-slate-500">Cada célula é a média da semana (escala 1–5) · ▲/▼ compara a primeira com a última semana avaliada</p>
+      </div>
+      {funcionarios.length === 0 ? (
+        <p className="text-xs text-slate-500">Nenhum colaborador nesta loja/filtro.</p>
+      ) : (
+        <table className="text-xs min-w-[900px] border-collapse">
+          <thead>
+            <tr>
+              <th className="sticky left-0 bg-slate-900 py-1 pr-3 text-left text-slate-400 font-medium z-10">Colaborador</th>
+              {MESES.map((m) => (
+                <th key={m.id} colSpan={m.semanas} className="py-1 px-1 text-center text-slate-400 font-medium border-l border-slate-800">
+                  {m.label}
+                </th>
+              ))}
+            </tr>
+            <tr>
+              <th className="sticky left-0 bg-slate-900 pb-2 z-10"></th>
+              {colunas.map((c) => (
+                <th key={c.key} className="pb-2 px-1 text-center text-slate-500 font-normal">S{c.semana}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {funcionarios.map((f) => {
+              const valores = colunas.map((c) => celula(f.id, c));
+              const preenchidos = valores.filter((v) => v !== null);
+              const tendencia = preenchidos.length >= 2 ? preenchidos[preenchidos.length - 1] - preenchidos[0] : 0;
+              return (
+                <tr key={f.id} className="border-t border-slate-800/60">
+                  <td className="sticky left-0 bg-slate-900 py-1.5 pr-3 whitespace-nowrap z-10">
+                    {f.nome}
+                    {preenchidos.length >= 2 && (
+                      <span className={`ml-2 text-[10px] ${tendencia > 0 ? 'text-emerald-400' : tendencia < 0 ? 'text-red-400' : 'text-slate-500'}`}>
+                        {tendencia > 0 ? '▲' : tendencia < 0 ? '▼' : '—'}
+                      </span>
+                    )}
+                  </td>
+                  {valores.map((v, i) => {
+                    const cor = v !== null ? COR_CLASSES[classificar(v).cor] : null;
+                    return (
+                      <td key={i} className="px-1 py-1.5 text-center">
+                        {v !== null ? (
+                          <span title={`${classificar(v).label} — ${v.toFixed(1)}`}
+                            className={`inline-block w-9 rounded-md py-1 ${cor.bg} ${cor.text} ring-1 ${cor.ring}`}>
+                            {v.toFixed(1)}
+                          </span>
+                        ) : (
+                          <span className="text-slate-700">·</span>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+/* ============================= APP PRINCIPAL ============================= */
+
+function App() {
+  const [avaliacoes, setAvaliacoes] = useState([]);
+  const [lojaId, setLojaId] = useState(LOJAS[0].id);
+  const [funcaoFiltro, setFuncaoFiltro] = useState('Todas');
+  const [mesId, setMesId] = useState('2026-07');
+  const [modal, setModal] = useState(null); // { funcionario, semana }
+  const [historico, setHistorico] = useState(null); // funcionario
+  const [carregando, setCarregando] = useState(true);
+  const [syncStatus, setSyncStatus] = useState('idle'); // idle | syncing | ok | erro
+  const [syncErro, setSyncErro] = useState('');
+
+  async function recarregar() {
+    if (CONFIG.API_URL === 'COLE_AQUI_A_URL_DO_APPS_SCRIPT') {
+      setSyncStatus('erro');
+      setSyncErro('CONFIG.API_URL ainda não foi preenchida com a URL do Apps Script.');
+      setCarregando(false);
+      return;
+    }
+    setSyncStatus('syncing');
+    setSyncErro('');
+    try {
+      const dados = await apiCarregarAvaliacoes();
+      setAvaliacoes(Array.isArray(dados) ? dados : []);
+      setSyncStatus('ok');
+    } catch (err) {
+      setSyncStatus('erro');
+      setSyncErro(err.message || String(err));
+    } finally {
+      setCarregando(false);
+    }
+  }
+
+  useEffect(() => { recarregar(); }, []);
+
+  const mesAtual = MESES.find((m) => m.id === mesId);
+  const funcionariosLoja = FUNCIONARIOS.filter((f) => f.ativo !== false && f.lojaId === lojaId && (funcaoFiltro === 'Todas' || f.funcao === funcaoFiltro));
+
+  function avaliacaoDe(funcionarioId, semana) {
+    return avaliacoes.find((a) => a.funcionarioId === funcionarioId && a.mes === mesId && a.semana === semana);
+  }
+
+  function mediaMensal(funcionarioId) {
+    const regs = avaliacoes.filter((a) => a.funcionarioId === funcionarioId && a.mes === mesId);
+    if (!regs.length) return null;
+    const medias = regs.map((r) => mediaObj(r.scores));
+    return medias.reduce((a, b) => a + b, 0) / medias.length;
+  }
+
+  async function salvarAvaliacao(funcionario, semana, payload) {
+    const idExistente = `${funcionario.id}-${mesId}-s${semana}`;
+    const registro = {
+      id: idExistente,
+      funcionarioId: funcionario.id,
+      lojaId: funcionario.lojaId,
+      mes: mesId,
+      semana,
+      data: payload.data,
+      gestor: payload.gestor,
+      scores: payload.scores,
+      observacao: payload.observacao,
+    };
+    const salvo = await apiSalvarAvaliacao(registro); // deixa o erro propagar para o modal tratar
+    setAvaliacoes((prev) => {
+      const semExistente = prev.filter((a) => a.id !== idExistente);
+      return [...semExistente, salvo];
+    });
+    setModal(null);
+  }
+
+  /* ---- Cálculos agregados para a loja/mês selecionados ---- */
+  const linhasFuncionarios = funcionariosLoja.map((f) => {
+    const media = mediaMensal(f.id);
+    const cls = media !== null ? classificar(media) : null;
+    const semanasPreenchidas = [];
+    for (let s = 1; s <= mesAtual.semanas; s++) {
+      const av = avaliacaoDe(f.id, s);
+      semanasPreenchidas.push(av ? mediaObj(av.scores) : null);
+    }
+    return { funcionario: f, media, cls, semanas: semanasPreenchidas };
+  });
+
+  const avaliados = linhasFuncionarios.filter((l) => l.media !== null);
+  const mediaLoja = avaliados.length ? avaliados.reduce((a, l) => a + l.media, 0) / avaliados.length : 0;
+  const countPorClasse = { Excelente: 0, Bom: 0, Regular: 0, 'Necessita desenvolvimento': 0 };
+  avaliados.forEach((l) => { countPorClasse[l.cls.label]++; });
+
+  const ranking = [...avaliados].sort((a, b) => b.media - a.media);
+  const melhores = ranking.slice(0, 3);
+  const precisamDesenvolver = [...avaliados].sort((a, b) => a.media - b.media).slice(0, 3);
+
+  /* ---- Evolução mensal da loja (todos os meses) ---- */
+  const evolucaoLabels = MESES.map((m) => m.label);
+  const evolucaoData = MESES.map((m) => {
+    const regs = avaliacoes.filter((a) => a.lojaId === lojaId && a.mes === m.id);
+    if (!regs.length) return 0;
+    const porFuncionario = {};
+    regs.forEach((r) => {
+      if (!porFuncionario[r.funcionarioId]) porFuncionario[r.funcionarioId] = [];
+      porFuncionario[r.funcionarioId].push(mediaObj(r.scores));
+    });
+    const medias = Object.values(porFuncionario).map((arr) => arr.reduce((a, b) => a + b, 0) / arr.length);
+    return +(medias.reduce((a, b) => a + b, 0) / medias.length).toFixed(2);
+  });
+
+  /* ---- Comparação entre funções (mês/loja atual) ---- */
+  const funcoes = ['Farmacêutico', 'Balconista', 'Caixa', 'Auxiliar de Logística', 'Administrativo'];
+  const comparacaoFuncao = funcoes.map((fn) => {
+    const ids = FUNCIONARIOS.filter((f) => f.lojaId === lojaId && f.funcao === fn).map((f) => f.id);
+    const medias = ids.map((id) => mediaMensal(id)).filter((m) => m !== null);
+    return medias.length ? +(medias.reduce((a, b) => a + b, 0) / medias.length).toFixed(2) : 0;
+  });
+
+  /* ---- Exportações ---- */
+  function exportarExcel() {
+    const linhas = linhasFuncionarios.map((l) => {
+      const row = {
+        Funcionário: l.funcionario.nome,
+        Função: l.funcionario.funcao,
+        Loja: LOJAS.find((lj) => lj.id === lojaId).nome,
+        Mês: mesAtual.label,
+      };
+      l.semanas.forEach((s, i) => { row[`Semana ${i + 1}`] = s !== null ? s.toFixed(1) : '-'; });
+      row['Média Mensal (0-5)'] = l.media !== null ? l.media.toFixed(2) : '-';
+      row['Média Mensal (0-100)'] = l.media !== null ? (l.media * 20).toFixed(0) : '-';
+      row['Classificação'] = l.cls ? l.cls.label : '-';
+      return row;
+    });
+    const ws = XLSX.utils.json_to_sheet(linhas);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Avaliações');
+    XLSX.writeFile(wb, `Avaliacao_Desempenho_${lojaId}_${mesId}.xlsx`);
+  }
+
+  function exportarPDF() { window.print(); }
+
+  const lojaAtual = LOJAS.find((l) => l.id === lojaId);
+
+  if (carregando) {
+    return (
+      <div className="max-w-7xl mx-auto p-6 flex flex-col items-center justify-center min-h-[60vh] text-slate-400">
+        <div className="text-3xl mb-3">⏳</div>
+        <p className="text-sm">Carregando avaliações da planilha...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-7xl mx-auto p-4 md:p-6 print-area">
+      {CONFIG.API_URL === 'COLE_AQUI_A_URL_DO_APPS_SCRIPT' && (
+        <div className="no-print bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm rounded-xl p-4 mb-6">
+          ⚠️ <strong>Backend não configurado.</strong> Publique o Apps Script (Code.gs) e cole a URL do Web App
+          em <code className="bg-slate-800 px-1.5 py-0.5 rounded">CONFIG.API_URL</code> no topo do arquivo para
+          habilitar leitura e gravação real na planilha. Enquanto isso, nada será salvo.
+        </div>
+      )}
+      {/* HEADER */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Avaliação de Desempenho Inteligente</h1>
+          <p className="text-slate-400 text-sm mt-1">FarmaRede · Avaliação semanal objetiva, com consolidação mensal automática</p>
+        </div>
+        <div className="flex gap-2 no-print items-center">
+          <SyncStatus status={syncStatus} erro={syncErro} onRetry={recarregar} />
+          <button onClick={recarregar} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-sm font-medium flex items-center gap-2">
+            🔄 Atualizar
+          </button>
+          <button onClick={exportarExcel} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-sm font-medium flex items-center gap-2">
+            📊 Exportar Excel
+
+          </button>
+          <button onClick={exportarPDF} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-sm font-medium flex items-center gap-2">
+            🖨️ Exportar PDF
+          </button>
+        </div>
+      </div>
+
+      {/* FILTROS */}
+      <div className="flex flex-wrap gap-3 mb-6 no-print">
+        <select value={lojaId} onChange={(e) => setLojaId(e.target.value)}
+          className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm">
+          {LOJAS.map((l) => <option key={l.id} value={l.id}>{l.nome}</option>)}
+        </select>
+        <select value={funcaoFiltro} onChange={(e) => setFuncaoFiltro(e.target.value)}
+          className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm">
+          <option value="Todas">Todas as funções</option>
+          {funcoes.map((f) => <option key={f} value={f}>{f}</option>)}
+        </select>
+        <select value={mesId} onChange={(e) => setMesId(e.target.value)}
+          className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm">
+          {MESES.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+        </select>
+      </div>
+
+      {/* KPIs */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+        <KpiCard label="Média geral da loja" value={mediaLoja ? mediaLoja.toFixed(1) : '-'} sub={mediaLoja ? `${(mediaLoja * 20).toFixed(0)} / 100` : ''} />
+        <KpiCard label="Colaboradores avaliados" value={avaliados.length} sub={`de ${funcionariosLoja.length} na loja`} />
+        <KpiCard label="Excelente" value={countPorClasse['Excelente']} cor="emerald" />
+        <KpiCard label="Bom" value={countPorClasse['Bom']} cor="blue" />
+        <KpiCard label="Necessita desenvolvimento" value={countPorClasse['Necessita desenvolvimento']} cor="red" />
+      </div>
+
+      {/* GRÁFICOS */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+        <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4">
+          <h3 className="text-sm font-semibold mb-2 text-slate-300">Evolução mensal — {lojaAtual.nome}</h3>
+          <div style={{ height: 220 }}><LineChart labels={evolucaoLabels} data={evolucaoData} id="evolucao" /></div>
+        </div>
+        <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4">
+          <h3 className="text-sm font-semibold mb-2 text-slate-300">Comparação entre funções — {mesAtual.label}</h3>
+          <div style={{ height: 220 }}>
+            <BarChart labels={funcoes} data={comparacaoFuncao} colors={['#818cf8', '#34d399', '#fbbf24']} id="comparacao" />
+          </div>
+        </div>
+      </div>
+
+      {/* RANKINGS */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4">
+          <h3 className="text-sm font-semibold mb-3 text-slate-300">🏆 Melhores desempenhos</h3>
+          {melhores.length === 0 && <p className="text-xs text-slate-500">Sem avaliações neste mês.</p>}
+          <div className="space-y-2">
+            {melhores.map((l, i) => (
+              <div key={l.funcionario.id} className="flex items-center justify-between bg-slate-800/50 rounded-lg px-3 py-2">
+                <span className="text-sm"><span className="text-slate-500 mr-2">#{i + 1}</span>{l.funcionario.nome}</span>
+                <Badge cor={l.cls.cor}>{l.media.toFixed(1)}</Badge>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4">
+          <h3 className="text-sm font-semibold mb-3 text-slate-300">⚠️ Necessitam desenvolvimento</h3>
+          {precisamDesenvolver.length === 0 && <p className="text-xs text-slate-500">Sem avaliações neste mês.</p>}
+          <div className="space-y-2">
+            {precisamDesenvolver.map((l) => (
+              <div key={l.funcionario.id} className="flex items-center justify-between bg-slate-800/50 rounded-lg px-3 py-2">
+                <span className="text-sm">{l.funcionario.nome}</span>
+                <Badge cor={l.cls.cor}>{l.media.toFixed(1)}</Badge>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* TABELA DETALHADA */}
+      <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 mb-6 overflow-x-auto">
+        <h3 className="text-sm font-semibold mb-3 text-slate-300">Detalhamento — {lojaAtual.nome} · {mesAtual.label}</h3>
+        <table className="w-full text-sm min-w-[720px]">
+          <thead>
+            <tr className="text-left text-slate-400 border-b border-slate-800">
+              <th className="py-2 pr-3">Funcionário</th>
+              <th className="py-2 pr-3">Função</th>
+              {Array.from({ length: mesAtual.semanas }).map((_, i) => (
+                <th key={i} className="py-2 px-2 text-center">S{i + 1}</th>
+              ))}
+              <th className="py-2 px-2 text-center">Mensal</th>
+              <th className="py-2 px-2 text-center">/100</th>
+              <th className="py-2 px-2">Classificação</th>
+              <th className="py-2 px-2 no-print"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {linhasFuncionarios.map((l) => (
+              <tr key={l.funcionario.id} className="border-b border-slate-800/60 hover:bg-slate-800/30">
+                <td className="py-2 pr-3 font-medium">{l.funcionario.nome}</td>
+                <td className="py-2 pr-3 text-slate-400">
+                  {l.funcionario.funcao || <span className="text-amber-400 text-xs">⚠ função pendente</span>}
+                </td>
+                {l.semanas.map((s, i) => (
+                  <td key={i} className="py-2 px-2 text-center">
+                    {s !== null ? (
+                      <span className="text-slate-200">{s.toFixed(1)}</span>
+                    ) : l.funcionario.funcao ? (
+                      <button onClick={() => setModal({ funcionario: l.funcionario, semana: i + 1 })}
+                        className="no-print text-xs text-indigo-400 hover:text-indigo-300 underline">
+                        avaliar
+                      </button>
+                    ) : (
+                      <span className="text-slate-600 text-xs">—</span>
+                    )}
+                  </td>
+                ))}
+                <td className="py-2 px-2 text-center font-bold">{l.media !== null ? l.media.toFixed(1) : '-'}</td>
+                <td className="py-2 px-2 text-center text-slate-400">{l.media !== null ? (l.media * 20).toFixed(0) : '-'}</td>
+                <td className="py-2 px-2">{l.cls ? <Badge cor={l.cls.cor}>{l.cls.label}</Badge> : <span className="text-slate-500 text-xs">Sem dados</span>}</td>
+                <td className="py-2 px-2 no-print text-right">
+                  <button onClick={() => setHistorico(l.funcionario)} className="text-xs text-slate-400 hover:text-white underline">histórico</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* EVOLUÇÃO TEMPORAL — COLABORADORES x MESES/SEMANAS */}
+      <PainelEvolucaoTemporal funcionarios={funcionariosLoja} avaliacoes={avaliacoes} />
+
+      <p className="text-xs text-slate-600 text-center pb-4">
+        Todas as avaliações ficam registradas com data, gestor responsável, loja, funcionário, notas e observações — servindo como documentação formal do processo.
+      </p>
+
+      {modal && (
+        <ModalAvaliacao
+          funcionario={modal.funcionario}
+          mes={mesAtual.label}
+          semana={modal.semana}
+          existente={avaliacaoDe(modal.funcionario.id, modal.semana)}
+          onClose={() => setModal(null)}
+          onSave={(payload) => salvarAvaliacao(modal.funcionario, modal.semana, payload)}
+        />
+      )}
+      {historico && (
+        <ModalHistorico funcionario={historico} avaliacoes={avaliacoes} onClose={() => setHistorico(null)} />
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
