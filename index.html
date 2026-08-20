@@ -397,33 +397,20 @@ const FUNCIONARIOS = [
   { id: "e270", nome: "Yasmin Medeiros Lopes", funcao: "Balconista", lojaId: "4" },
 ];
 
-// Gera a lista de meses do ano com o número de semanas calculado a partir dos
-// dias reais do mês (ceil(dias/7) — meses de 31 dias ficam com 5 semanas, a
-// maioria dos meses de 30 dias fica com 5 também, fevereiro com 4). Para o
-// mês em curso, conta só as semanas já decorridas até hoje (mês parcial); para
-// meses futuros ainda não iniciados, não gera semanas de avaliação (fica de fora
-// do seletor até o mês realmente começar).
+// Gera a lista com os 12 meses do ano, calculando o número de semanas a
+// partir dos dias reais de cada mês (ceil(dias/7) — meses de 31 dias ficam
+// com 5 semanas, fevereiro com 4). Os 12 meses ficam sempre disponíveis no
+// seletor, independente da data do dispositivo que estiver abrindo a página.
 function gerarMeses_(ano) {
   const NOMES_MES = [
     'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
     'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
   ];
-  const hoje = new Date();
-  const anoAtual = hoje.getFullYear();
-  const mesAtualIdx = hoje.getMonth(); // 0-based
-  const diaAtual = hoje.getDate();
 
   const meses = [];
   for (let m = 0; m < 12; m++) {
     const diasNoMes = new Date(ano, m + 1, 0).getDate();
-    const ehMesFuturo = ano > anoAtual || (ano === anoAtual && m > mesAtualIdx);
-    if (ehMesFuturo) continue;
-
-    const ehMesAtual = ano === anoAtual && m === mesAtualIdx;
-    const semanas = ehMesAtual
-      ? Math.max(1, Math.ceil(diaAtual / 7))
-      : Math.ceil(diasNoMes / 7);
-
+    const semanas = Math.ceil(diasNoMes / 7);
     const mm = String(m + 1).padStart(2, '0');
     meses.push({ id: `${ano}-${mm}`, label: `${NOMES_MES[m]}/${ano}`, semanas });
   }
@@ -1251,7 +1238,11 @@ function App() {
   const [avaliacoes, setAvaliacoes] = useState([]);
   const [lojaId, setLojaId] = useState(LOJAS[0].id);
   const [funcaoFiltro, setFuncaoFiltro] = useState('Todas');
-  const [mesId, setMesId] = useState(MESES[MESES.length - 1].id);
+  const [mesId, setMesId] = useState(() => {
+    const hoje = new Date();
+    const idAtual = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`;
+    return MESES.some((m) => m.id === idAtual) ? idAtual : '2026-07';
+  });
   const [modal, setModal] = useState(null); // { funcionario, semana }
   const [historico, setHistorico] = useState(null); // funcionario
   const [carregando, setCarregando] = useState(true);
