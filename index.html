@@ -35,7 +35,20 @@ const { useState, useMemo, useRef, useEffect } = React;
 /* ============================= CONFIGURAÇÃO DA API (GOOGLE SHEETS) ============================= */
 /* Cole aqui a URL do Web App do Apps Script depois de publicá-lo (ver instruções). */
 const CONFIG = {
+  // Web App do Google Apps Script. O backend deve retornar:
+  // GET  -> { ok:true, funcionarios:[...], avaliacoes:[...] }
+  // POST -> { ok:true, avaliacao:{...} }
   API_URL: 'https://script.google.com/macros/s/AKfycbwS0I8nH592MqxnHPie2Zt8rmL17_RA6uN9ESpUQ8GOau3qcPHba5o7iiYfnhnpcwId/exec',
+
+  // Histórico publicado como CSV. É usado como fallback de leitura caso
+  // o GET do Apps Script esteja temporariamente indisponível.
+  CSV_HISTORICO_URL:
+    'https://docs.google.com/spreadsheets/d/e/2PACX-1vTrfLzzGuiY2SyfqC7i1ZJkUUgH7XK-3yOjawvW0_CGqQEQDNxOPY-aX3xWlODe-bX9caF7MJNXluxy/pub?gid=1629419082&single=true&output=csv',
+
+  // IMPORTANTE:
+  // Não apontar este endereço para a aba de avaliações.
+  // A fonte oficial dos colaboradores passa a ser o Apps Script,
+  // que deve ler a aba base_colaboradores e devolver funcionarios[].
 };
 
 /* ============================= DADOS BASE ============================= */
@@ -186,13 +199,108 @@ function csvParaColaboradores_(texto) {
 
 /* Busca e converte o CSV de colaboradores. Lança erro em caso de falha —
    quem chamar decide como tratar (mensagem na tela, retry, etc). */
-async function carregarColaboradoresCSV_() {
-  const resp = await fetch(`${CSV_COLABORADORES_URL}&_=${Date.now()}`, { cache: 'no-store' });
-  if (!resp.ok) {
-    throw new Error(`Falha ao buscar CSV de colaboradores (HTTP ${resp.status}).`);
+function normalizarAvaliacao_(a) {
+  if (!a || typeof a !== 'object') return null;
+
+  let scores = a.scores;
+  if ((scores === undefined || scores === null || typeof scores !== 'object') && a.scoresJson) {
+    try {
+      scores = typeof a.scoresJson === 'string' ? JSON.parse(a.scoresJson) : a.scoresJson;
+    } catch (_) {
+      scores = {};
+    }
   }
+
+  return {
+    ...a,
+    id: String(a.id ?? ''),
+    funcionarioId: String(a.funcionarioId ?? ''),
+    lojaId: String(a.lojaId ?? ''),
+    mes: String(a.mes ?? ''),
+    semana: Number(a.semana ?? 0),
+    data: a.data ?? '',
+    gestor: a.gestor ?? '',
+    scores: scores && typeof scores === 'object' ? scores : {},
+    observacao: a.observacao ?? '',
+  };
+}
+
+function normalizarColaborador_(f) {
+  if (!f || typeof f !== 'object') return null;
+  const ativoBruto = String(f.ativo ?? '').trim().toLowerCase();
+
+  return {
+    id: String(f.id ?? f.funcionarioId ?? '').trim(),
+    nome: String(f.nome ?? f.name ?? '').trim(),
+    funcao: String(f.funcao ?? f.funcaoNome ?? f.cargo ?? '').trim(),
+    lojaId: String(f.lojaId ?? f.loja ?? '').trim(),
+    ativo: ativoBruto === '' ? true : !['false', '0', 'não', 'nao', 'n', 'inativo'].includes(ativoBruto),
+  };
+}
+
+function validarColaboradores_(lista) {
+  return (Array.isArray(lista) ? lista : [])
+    .map(normalizarColaborador_)
+    .filter((f) => f && f.id && f.nome && f.lojaId);
+}
+
+async function apiCarregarDados() {
+  const resp = await fetch(`${CONFIG.API_URL}?_=${Date.now()}`, {
+    method: 'GET',
+    cache: 'no-store',
+  });
+  const json = await parseRespostaApi_(resp);
+
+  if (!json.ok) throw new Error(json.erro || 'Falha ao carregar dados do backend.');
+
+  const funcionarios = validarColaboradores_(json.funcionarios || json.colaboradores || []);
+  const avaliacoes = (Array.isArray(json.avaliacoes) ? json.avaliacoes : [])
+    .map(normalizarAvaliacao_)
+    .filter(Boolean);
+
+  if (!funcionarios.length) {
+    throw new Error(
+      'O Apps Script respondeu, mas não retornou funcionarios[]. ' +
+      'Verifique se a aba base_colaboradores existe e se o Code.gs foi atualizado para devolvê-la.'
+    );
+  }
+
+  return { funcionarios, avaliacoes };
+}
+
+async function carregarHistoricoCSVFallback_() {
+  const resp = await fetch(`${CONFIG.CSV_HISTORICO_URL}&_=${Date.now()}`, {
+    cache: 'no-store',
+  });
+
+  if (!resp.ok) {
+    throw new Error(`Falha ao buscar histórico CSV (HTTP ${resp.status}).`);
+  }
+
   const texto = await resp.text();
-  return csvParaColaboradores_(texto);
+  const linhas = parseCSV_(texto);
+
+  if (!linhas.length) return [];
+
+  const cab = linhas[0].map((c) => String(c).trim().toLowerCase());
+  const idx = (nome) => cab.indexOf(nome.toLowerCase());
+
+  return linhas.slice(1)
+    .filter((l) => l.some((v) => String(v).trim() !== ''))
+    .map((l) => normalizarAvaliacao_({
+      id: l[idx('id')],
+      funcionarioId: l[idx('funcionarioid')],
+      lojaId: l[idx('lojaid')],
+      mes: l[idx('mes')],
+      semana: l[idx('semana')],
+      data: l[idx('data')],
+      gestor: l[idx('gestor')],
+      scoresJson: l[idx('scoresjson')],
+      observacao: l[idx('observacao')],
+      criadoEm: l[idx('criadoem')],
+      atualizadoEm: l[idx('atualizadoem')],
+    }))
+    .filter((a) => a && a.funcionarioId && a.mes);
 }
 
 const MESES = [
@@ -1038,26 +1146,35 @@ function App() {
     setSyncStatus('syncing');
     setSyncErro('');
     setColaboradoresErro('');
+    setCarregando(true);
 
-    // Colaboradores (CSV) e avaliações (Apps Script) são independentes —
-    // busca as duas em paralelo e trata cada falha separadamente, para que
-    // um problema em uma fonte não esconda os dados da outra.
-    const colaboradoresPromise = carregarColaboradoresCSV_()
-      .then((lista) => { setFuncionarios(lista); })
-      .catch((err) => { setColaboradoresErro(err.message || String(err)); });
+    try {
+      const dados = await apiCarregarDados();
 
-    let avaliacoesPromise = Promise.resolve();
-    if (CONFIG.API_URL === 'COLE_AQUI_A_URL_DO_APPS_SCRIPT') {
+      // O backend é a fonte oficial dos dois conjuntos de dados.
+      setFuncionarios(dados.funcionarios);
+      setAvaliacoes(dados.avaliacoes);
+      setSyncStatus('ok');
+    } catch (err) {
+      // Mesmo que o Apps Script falhe na leitura, tenta preservar o histórico
+      // publicado em CSV. Isso não substitui o backend para salvar avaliações.
+      try {
+        const historico = await carregarHistoricoCSVFallback_();
+        setAvaliacoes(historico);
+      } catch (_) {
+        setAvaliacoes([]);
+      }
+
       setSyncStatus('erro');
-      setSyncErro('CONFIG.API_URL ainda não foi preenchida com a URL do Apps Script.');
-    } else {
-      avaliacoesPromise = apiCarregarAvaliacoes()
-        .then((dados) => { setAvaliacoes(Array.isArray(dados) ? dados : []); setSyncStatus('ok'); })
-        .catch((err) => { setSyncStatus('erro'); setSyncErro(err.message || String(err)); });
-    }
+      setSyncErro(err.message || String(err));
 
-    await Promise.all([colaboradoresPromise, avaliacoesPromise]);
-    setCarregando(false);
+      setColaboradoresErro(
+        'Não foi possível carregar a base de colaboradores pelo Apps Script. ' +
+        'O Code.gs precisa retornar funcionarios[] a partir da aba base_colaboradores.'
+      );
+    } finally {
+      setCarregando(false);
+    }
   }
 
   useEffect(() => { recarregar(); }, []);
@@ -1169,7 +1286,7 @@ function App() {
     return (
       <div className="max-w-7xl mx-auto p-6 flex flex-col items-center justify-center min-h-[60vh] text-slate-400">
         <div className="text-3xl mb-3">⏳</div>
-        <p className="text-sm">Carregando colaboradores e avaliações da planilha...</p>
+        <p className="text-sm">Carregando colaboradores e histórico da planilha...</p>
       </div>
     );
   }
@@ -1178,16 +1295,18 @@ function App() {
     <div className="max-w-7xl mx-auto p-4 md:p-6 print-area">
       {CONFIG.API_URL === 'COLE_AQUI_A_URL_DO_APPS_SCRIPT' && (
         <div className="no-print bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm rounded-xl p-4 mb-6">
-          ⚠️ <strong>Backend não configurado.</strong> Publique o Apps Script (Code.gs) e cole a URL do Web App
-          em <code className="bg-slate-800 px-1.5 py-0.5 rounded">CONFIG.API_URL</code> no topo do arquivo para
-          habilitar leitura e gravação real na planilha. Enquanto isso, nada será salvo.
+          ⚠️ <strong>Backend não configurado.</strong> O Web App do Apps Script precisa estar publicado
+          como "Qualquer pessoa" e retornar <code className="bg-slate-800 px-1.5 py-0.5 rounded">funcionarios[]</code>
+          e <code className="bg-slate-800 px-1.5 py-0.5 rounded">avaliacoes[]</code>. Sem isso, os botões de avaliação
+          não conseguem ser montados.
         </div>
       )}
       {colaboradoresErro && (
         <div className="no-print bg-red-500/10 border border-red-500/30 text-red-300 text-sm rounded-xl p-4 mb-6">
-          ⚠️ <strong>Falha ao carregar a base de colaboradores (CSV).</strong> {colaboradoresErro}
-          {' '}Confira se a aba <code className="bg-slate-800 px-1.5 py-0.5 rounded">base_colaboradores</code> está
-          publicada na web (Arquivo → Compartilhar → Publicar na web) e clique em "🔄 Atualizar".
+          ⚠️ <strong>Falha ao carregar os colaboradores.</strong> {colaboradoresErro}
+          {' '}A aba <code className="bg-slate-800 px-1.5 py-0.5 rounded">base_colaboradores</code> deve conter
+          <code className="bg-slate-800 px-1.5 py-0.5 rounded">id, nome, funcao, lojaId, ativo</code> e o Apps Script
+          deve devolvê-la em <code className="bg-slate-800 px-1.5 py-0.5 rounded">funcionarios[]</code>.
         </div>
       )}
       {/* HEADER */}
