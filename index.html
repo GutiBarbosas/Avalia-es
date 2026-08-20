@@ -397,11 +397,40 @@ const FUNCIONARIOS = [
   { id: "e270", nome: "Yasmin Medeiros Lopes", funcao: "Balconista", lojaId: "4" },
 ];
 
-const MESES = [
-  { id: '2026-05', label: 'Maio/2026', semanas: 4 },
-  { id: '2026-06', label: 'Junho/2026', semanas: 4 },
-  { id: '2026-07', label: 'Julho/2026', semanas: 3 },
-];
+// Gera a lista de meses do ano com o número de semanas calculado a partir dos
+// dias reais do mês (ceil(dias/7) — meses de 31 dias ficam com 5 semanas, a
+// maioria dos meses de 30 dias fica com 5 também, fevereiro com 4). Para o
+// mês em curso, conta só as semanas já decorridas até hoje (mês parcial); para
+// meses futuros ainda não iniciados, não gera semanas de avaliação (fica de fora
+// do seletor até o mês realmente começar).
+function gerarMeses_(ano) {
+  const NOMES_MES = [
+    'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+    'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
+  ];
+  const hoje = new Date();
+  const anoAtual = hoje.getFullYear();
+  const mesAtualIdx = hoje.getMonth(); // 0-based
+  const diaAtual = hoje.getDate();
+
+  const meses = [];
+  for (let m = 0; m < 12; m++) {
+    const diasNoMes = new Date(ano, m + 1, 0).getDate();
+    const ehMesFuturo = ano > anoAtual || (ano === anoAtual && m > mesAtualIdx);
+    if (ehMesFuturo) continue;
+
+    const ehMesAtual = ano === anoAtual && m === mesAtualIdx;
+    const semanas = ehMesAtual
+      ? Math.max(1, Math.ceil(diaAtual / 7))
+      : Math.ceil(diasNoMes / 7);
+
+    const mm = String(m + 1).padStart(2, '0');
+    meses.push({ id: `${ano}-${mm}`, label: `${NOMES_MES[m]}/${ano}`, semanas });
+  }
+  return meses;
+}
+
+const MESES = gerarMeses_(2026);
 
 /* PRNG determinístico simples para gerar dados de exemplo estáveis */
 function mulberry32(seed) {
@@ -1222,7 +1251,7 @@ function App() {
   const [avaliacoes, setAvaliacoes] = useState([]);
   const [lojaId, setLojaId] = useState(LOJAS[0].id);
   const [funcaoFiltro, setFuncaoFiltro] = useState('Todas');
-  const [mesId, setMesId] = useState('2026-07');
+  const [mesId, setMesId] = useState(MESES[MESES.length - 1].id);
   const [modal, setModal] = useState(null); // { funcionario, semana }
   const [historico, setHistorico] = useState(null); // funcionario
   const [carregando, setCarregando] = useState(true);
