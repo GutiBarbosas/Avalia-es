@@ -35,20 +35,7 @@ const { useState, useMemo, useRef, useEffect } = React;
 /* ============================= CONFIGURAÇÃO DA API (GOOGLE SHEETS) ============================= */
 /* Cole aqui a URL do Web App do Apps Script depois de publicá-lo (ver instruções). */
 const CONFIG = {
-  // Web App do Google Apps Script. O backend deve retornar:
-  // GET  -> { ok:true, funcionarios:[...], avaliacoes:[...] }
-  // POST -> { ok:true, avaliacao:{...} }
   API_URL: 'https://script.google.com/macros/s/AKfycbwS0I8nH592MqxnHPie2Zt8rmL17_RA6uN9ESpUQ8GOau3qcPHba5o7iiYfnhnpcwId/exec',
-
-  // Histórico publicado como CSV. É usado como fallback de leitura caso
-  // o GET do Apps Script esteja temporariamente indisponível.
-  CSV_HISTORICO_URL:
-    'https://docs.google.com/spreadsheets/d/e/2PACX-1vTrfLzzGuiY2SyfqC7i1ZJkUUgH7XK-3yOjawvW0_CGqQEQDNxOPY-aX3xWlODe-bX9caF7MJNXluxy/pub?gid=1629419082&single=true&output=csv',
-
-  // IMPORTANTE:
-  // Não apontar este endereço para a aba de avaliações.
-  // A fonte oficial dos colaboradores passa a ser o Apps Script,
-  // que deve ler a aba base_colaboradores e devolver funcionarios[].
 };
 
 /* ============================= DADOS BASE ============================= */
@@ -122,196 +109,298 @@ const LOJAS = [
   { id: "31", nome: "Loja 31" },
 ];
 
-/* ============================= BASE DE COLABORADORES (CSV DINÂMICO) ============================= */
-/* A lista de colaboradores não é mais fixa no código: ela é carregada em tempo
-   de execução a partir da aba "base_colaboradores" da planilha, publicada como
-   CSV (Arquivo > Compartilhar > Publicar na web). Isso permite atualizar quem
-   está ativo, mudar de função ou de loja direto na planilha, sem precisar
-   editar/publicar este arquivo de novo. */
-const CSV_COLABORADORES_URL =
-  'https://docs.google.com/spreadsheets/d/e/2PACX-1vTrfLzzGuiY2SyfqC7i1ZJkUUgH7XK-3yOjawvW0_CGqQEQDNxOPY-aX3xWlODe-bX9caF7MJNXluxy/pub?gid=0&single=true&output=csv';
-
-/* Parser de CSV simples com suporte a valores entre aspas (contendo vírgula). */
-function parseCSV_(texto) {
-  const linhas = [];
-  let linhaAtual = [];
-  let campoAtual = '';
-  let dentroAspas = false;
-
-  for (let i = 0; i < texto.length; i++) {
-    const c = texto[i];
-    if (dentroAspas) {
-      if (c === '"') {
-        if (texto[i + 1] === '"') { campoAtual += '"'; i++; }
-        else { dentroAspas = false; }
-      } else {
-        campoAtual += c;
-      }
-    } else if (c === '"') {
-      dentroAspas = true;
-    } else if (c === ',') {
-      linhaAtual.push(campoAtual);
-      campoAtual = '';
-    } else if (c === '\n' || c === '\r') {
-      if (c === '\r' && texto[i + 1] === '\n') i++;
-      linhaAtual.push(campoAtual);
-      campoAtual = '';
-      linhas.push(linhaAtual);
-      linhaAtual = [];
-    } else {
-      campoAtual += c;
-    }
-  }
-  if (campoAtual !== '' || linhaAtual.length) {
-    linhaAtual.push(campoAtual);
-    linhas.push(linhaAtual);
-  }
-  return linhas.filter((l) => l.some((campo) => String(campo).trim() !== ''));
-}
-
-/* Converte o CSV bruto (com cabeçalho id,nome,funcao,lojaId,ativo) em objetos
-   de colaborador no mesmo formato que o restante do dashboard já espera. */
-function csvParaColaboradores_(texto) {
-  const linhas = parseCSV_(texto);
-  if (!linhas.length) return [];
-
-  const cabecalho = linhas[0].map((c) => String(c).trim().toLowerCase());
-  const idxId = cabecalho.indexOf('id');
-  const idxNome = cabecalho.indexOf('nome');
-  const idxFuncao = cabecalho.indexOf('funcao');
-  const idxLoja = cabecalho.indexOf('lojaid');
-  const idxAtivo = cabecalho.indexOf('ativo');
-
-  return linhas.slice(1)
-    .filter((l) => l[idxId] && String(l[idxId]).trim() !== '')
-    .map((l) => {
-      const ativoBruto = idxAtivo > -1 ? String(l[idxAtivo]).trim().toLowerCase() : '';
-      const ativo = ativoBruto === '' ? true : !['false', '0', 'não', 'nao', 'n', 'inativo'].includes(ativoBruto);
-      return {
-        id: String(l[idxId]).trim(),
-        nome: String(l[idxNome] || '').trim(),
-        funcao: String(l[idxFuncao] || '').trim(),
-        lojaId: String(l[idxLoja] || '').trim(),
-        ativo,
-      };
-    });
-}
-
-/* Busca e converte o CSV de colaboradores. Lança erro em caso de falha —
-   quem chamar decide como tratar (mensagem na tela, retry, etc). */
-function normalizarAvaliacao_(a) {
-  if (!a || typeof a !== 'object') return null;
-
-  let scores = a.scores;
-  if ((scores === undefined || scores === null || typeof scores !== 'object') && a.scoresJson) {
-    try {
-      scores = typeof a.scoresJson === 'string' ? JSON.parse(a.scoresJson) : a.scoresJson;
-    } catch (_) {
-      scores = {};
-    }
-  }
-
-  return {
-    ...a,
-    id: String(a.id ?? ''),
-    funcionarioId: String(a.funcionarioId ?? ''),
-    lojaId: String(a.lojaId ?? ''),
-    mes: String(a.mes ?? ''),
-    semana: Number(a.semana ?? 0),
-    data: a.data ?? '',
-    gestor: a.gestor ?? '',
-    scores: scores && typeof scores === 'object' ? scores : {},
-    observacao: a.observacao ?? '',
-  };
-}
-
-function normalizarColaborador_(f) {
-  if (!f || typeof f !== 'object') return null;
-  const ativoBruto = String(f.ativo ?? '').trim().toLowerCase();
-
-  return {
-    id: String(f.id ?? f.funcionarioId ?? '').trim(),
-    nome: String(f.nome ?? f.name ?? '').trim(),
-    funcao: String(f.funcao ?? f.funcaoNome ?? f.cargo ?? '').trim(),
-    lojaId: String(f.lojaId ?? f.loja ?? '').trim(),
-    ativo: ativoBruto === '' ? true : !['false', '0', 'não', 'nao', 'n', 'inativo'].includes(ativoBruto),
-  };
-}
-
-function validarColaboradores_(lista) {
-  return (Array.isArray(lista) ? lista : [])
-    .map(normalizarColaborador_)
-    .filter((f) => f && f.id && f.nome && f.lojaId);
-}
-
-async function apiCarregarDados() {
-  const resp = await fetch(`${CONFIG.API_URL}?_=${Date.now()}`, {
-    method: 'GET',
-    cache: 'no-store',
-  });
-  const json = await parseRespostaApi_(resp);
-
-  if (!json.ok) throw new Error(json.erro || 'Falha ao carregar dados do backend.');
-
-  const funcionarios = validarColaboradores_(json.funcionarios || json.colaboradores || []);
-  const avaliacoes = (Array.isArray(json.avaliacoes) ? json.avaliacoes : [])
-    .map(normalizarAvaliacao_)
-    .filter(Boolean);
-
-  if (!funcionarios.length) {
-    throw new Error(
-      'O Apps Script respondeu, mas não retornou funcionarios[]. ' +
-      'Verifique se a aba base_colaboradores existe e se o Code.gs foi atualizado para devolvê-la.'
-    );
-  }
-
-  return { funcionarios, avaliacoes };
-}
-
-async function carregarHistoricoCSVFallback_() {
-  const resp = await fetch(`${CONFIG.CSV_HISTORICO_URL}&_=${Date.now()}`, {
-    cache: 'no-store',
-  });
-
-  if (!resp.ok) {
-    throw new Error(`Falha ao buscar histórico CSV (HTTP ${resp.status}).`);
-  }
-
-  const texto = await resp.text();
-  const linhas = parseCSV_(texto);
-
-  if (!linhas.length) return [];
-
-  const cab = linhas[0].map((c) => String(c).trim().toLowerCase());
-  const idx = (nome) => cab.indexOf(nome.toLowerCase());
-
-  return linhas.slice(1)
-    .filter((l) => l.some((v) => String(v).trim() !== ''))
-    .map((l) => normalizarAvaliacao_({
-      id: l[idx('id')],
-      funcionarioId: l[idx('funcionarioid')],
-      lojaId: l[idx('lojaid')],
-      mes: l[idx('mes')],
-      semana: l[idx('semana')],
-      data: l[idx('data')],
-      gestor: l[idx('gestor')],
-      scoresJson: l[idx('scoresjson')],
-      observacao: l[idx('observacao')],
-      criadoEm: l[idx('criadoem')],
-      atualizadoEm: l[idx('atualizadoem')],
-    }))
-    .filter((a) => a && a.funcionarioId && a.mes);
-}
+const FUNCIONARIOS = [
+  { id: "e1", nome: "Ademilton Hungria Dos Santos", funcao: "Farmacêutico", lojaId: "16" },
+  { id: "e2", nome: "Adinaildes Dos Santos Paixão", funcao: "Balconista", lojaId: "29" },
+  { id: "e3", nome: "Adria Damasceno Rosa", funcao: "Balconista", lojaId: "8" },
+  { id: "e4", nome: "Adriana Dos Santos Barbosa", funcao: "Balconista", lojaId: "25" },
+  { id: "e5", nome: "Adriana Gomes Da Silva", funcao: "Balconista", lojaId: "19" },
+  { id: "e6", nome: "Alana De Jesus Peixoto", funcao: "Caixa", lojaId: "6" },
+  { id: "e7", nome: "Alana Sousa De Oliveira", funcao: "Balconista", lojaId: "16" },
+  { id: "e8", nome: "Alciene De Jesus Dias", funcao: "Balconista", lojaId: "28" },
+  { id: "e9", nome: "Alessandra Santana Cruz De Jesus", funcao: "Balconista", lojaId: "7" },
+  { id: "e10", nome: "Alexandre Da Rocha Brito", funcao: "Balconista", lojaId: "24" },
+  { id: "e11", nome: "Alice Barbosa Lisboa", funcao: "Caixa", lojaId: "21" },
+  { id: "e12", nome: "Alice Souza Vieira Santana", funcao: "Balconista", lojaId: "10" },
+  { id: "e13", nome: "Aline Santos Pereira", funcao: "Balconista", lojaId: "10" },
+  { id: "e14", nome: "Alisson Vitor Cruz Dos Santos", funcao: "Caixa", lojaId: "25" },
+  { id: "e15", nome: "Amanda Alves Santos", funcao: "Caixa", lojaId: "13" },
+  { id: "e16", nome: "Ana Cristina Da Cruz Trigueiros", funcao: "Caixa", lojaId: "23" },
+  { id: "e17", nome: "Ana Cristina Dos Santos Rasteli", funcao: "Balconista", lojaId: "21" },
+  { id: "e19", nome: "Ana Luiza Conceicao Da Assuncao", funcao: "Balconista", lojaId: "24" },
+  { id: "e18", nome: "Ana Luiza De Souza Da Silva", funcao: "Balconista", lojaId: "13" },
+  { id: "e20", nome: "Ana Paula Oliveira Santos", funcao: "Balconista", lojaId: "8" },
+  { id: "e21", nome: "Ana Paula Santos De Oliveira", funcao: "Farmacêutico", lojaId: "21" },
+  { id: "e22", nome: "Ana Vitoria Braz Da Silva Matos", funcao: "Balconista", lojaId: "3" },
+  { id: "e23", nome: "Andre Lopes Galvao Filho", funcao: "Farmacêutico", lojaId: "8" },
+  { id: "e284", nome: "Andrea Dos Santos Maia", funcao: "Caixa", lojaId: "5" },
+  { id: "e24", nome: "Andrea Goncalves Vitorio", funcao: "Farmacêutico", lojaId: "13" },
+  { id: "e271", nome: "Andreia Alves Soares", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e25", nome: "Anne Joselly Boto Gomes", funcao: "Caixa", lojaId: "18" },
+  { id: "e26", nome: "Ariane Gomes Martins", funcao: "Balconista", lojaId: "14" },
+  { id: "e272", nome: "Arlene Lisboa Jordão", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e273", nome: "Armando Gonçalves Dos Santos Neto", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e27", nome: "Barbara Larissa Santos Da Conceicao", funcao: "Caixa", lojaId: "24" },
+  { id: "e28", nome: "Barbara Souza Lima", funcao: "Balconista", lojaId: "20" },
+  { id: "e29", nome: "Barbara Suellen Moreno Leao Dos Santos Evangelista", funcao: "Caixa", lojaId: "11" },
+  { id: "e30", nome: "Beatriz De Oliveira Almeida", funcao: "Balconista", lojaId: "8" },
+  { id: "e31", nome: "Beatriz Pires De Jesus", funcao: "Balconista", lojaId: "21" },
+  { id: "e32", nome: "Bianca Dos Santos Carvalho", funcao: "Caixa", lojaId: "31" },
+  { id: "e33", nome: "Bianca Dos Santos De Jesus", funcao: "Farmacêutico", lojaId: "12" },
+  { id: "e34", nome: "Bruna Neri Vieira", funcao: "Caixa", lojaId: "3" },
+  { id: "e35", nome: "Bruna Sousa Ribeiro Coelho", funcao: "Balconista", lojaId: "14" },
+  { id: "e36", nome: "Caio Lucca Dos Santos Ramos", funcao: "Balconista", lojaId: "28" },
+  { id: "e274", nome: "Caique Da Silva Borges", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e37", nome: "Caique Moreira Silva", funcao: "Caixa", lojaId: "22" },
+  { id: "e38", nome: "Camile Do Espirito Santo Bispo", funcao: "Caixa", lojaId: "27" },
+  { id: "e39", nome: "Carlos Eduardo Maia Da Silva", funcao: "Balconista", lojaId: "27" },
+  { id: "e275", nome: "Carlos Henrique Cerqueira Silva Junior", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e40", nome: "Carolaine Barbosa Da Conceicao", funcao: "Balconista", lojaId: "21" },
+  { id: "e41", nome: "Carolina Santos Da Costa", funcao: "Balconista", lojaId: "10" },
+  { id: "e42", nome: "Caroline Da Silva Lima", funcao: "Balconista", lojaId: "18" },
+  { id: "e43", nome: "Caroline Sousa De Jesus", funcao: "Caixa", lojaId: "16" },
+  { id: "e44", nome: "Cassia Cristina Carvalho Silva", funcao: "Balconista", lojaId: "10" },
+  { id: "e45", nome: "Caua Lima Conceicao", funcao: "Caixa", lojaId: "8" },
+  { id: "e46", nome: "Charlane Bezerra Da Silva Dos Santos", funcao: "Farmacêutico", lojaId: "28" },
+  { id: "e47", nome: "Cintia Caroline Santos", funcao: "Balconista", lojaId: "19" },
+  { id: "e48", nome: "Claudia Brenda De Lima Pereira", funcao: "Caixa", lojaId: "2" },
+  { id: "e49", nome: "Claudiane Cardozo Da Silva", funcao: "Balconista", lojaId: "26" },
+  { id: "e50", nome: "Cleiton Cruz Dos Santos", funcao: "Balconista", lojaId: "10" },
+  { id: "e51", nome: "Cristiane De Almeida Santos", funcao: "Balconista", lojaId: "31" },
+  { id: "e52", nome: "Cristiane Silva Maciel", funcao: "Farmacêutico", lojaId: "22" },
+  { id: "e53", nome: "Daiane Santos Conceicao Pereira", funcao: "Balconista", lojaId: "12" },
+  { id: "e54", nome: "Daiane Silva De Souza", funcao: "Balconista", lojaId: "11" },
+  { id: "e55", nome: "Dainara De Sena Dos Santos", funcao: "Balconista", lojaId: "30" },
+  { id: "e276", nome: "Daniel Alves Santana", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e56", nome: "Daniele De Aquino Dos Santos", funcao: "Caixa", lojaId: "16" },
+  { id: "e57", nome: "Daniele Santos De Jesus", funcao: "Balconista", lojaId: "24" },
+  { id: "e58", nome: "Danielle Matos Oliveira", funcao: "Balconista", lojaId: "24" },
+  { id: "e59", nome: "Danille Franca Damasceno", funcao: "Balconista", lojaId: "7" },
+  { id: "e60", nome: "Davi Ribeiro Santos", funcao: "Caixa", lojaId: "3" },
+  { id: "e61", nome: "Dayane Lorenzo De Jesus", funcao: "Balconista", lojaId: "22" },
+  { id: "e62", nome: "Dayse Almeida Freires", funcao: "Caixa", lojaId: "12" },
+  { id: "e63", nome: "Denise Ferreira Santos", funcao: "Balconista", lojaId: "12" },
+  { id: "e64", nome: "Diego Oliveira Do Vale", funcao: "Balconista", lojaId: "6" },
+  { id: "e65", nome: "Diego Silva De Lima", funcao: "Farmacêutico", lojaId: "23" },
+  { id: "e66", nome: "Dijalma Dos Santos Junior", funcao: "Caixa", lojaId: "11" },
+  { id: "e67", nome: "Dione Keity", funcao: "Balconista", lojaId: "11" },
+  { id: "e68", nome: "Dirleide Santana Dos Santos", funcao: "Caixa", lojaId: "14" },
+  { id: "e69", nome: "Edgar Reis De Santana Neto", funcao: "Caixa", lojaId: "25" },
+  { id: "e70", nome: "Edilene Dos Santos Souza", funcao: "Balconista", lojaId: "6" },
+  { id: "e71", nome: "Edilene Lima Dos Santos", funcao: "Balconista", lojaId: "1" },
+  { id: "e72", nome: "Edileuza Oliveira De Barros", funcao: "Balconista", lojaId: "20" },
+  { id: "e73", nome: "Edinar Fernandes De Oliveira", funcao: "Balconista", lojaId: "19" },
+  { id: "e74", nome: "Eduardo Souza Neves", funcao: "Balconista", lojaId: "27" },
+  { id: "e75", nome: "Elane Da Silva Mota", funcao: "Balconista", lojaId: "16" },
+  { id: "e76", nome: "Eliana De Menezes Madureira", funcao: "Caixa", lojaId: "23" },
+  { id: "e77", nome: "Eliane Teixeira De Jesus", funcao: "Balconista", lojaId: "15" },
+  { id: "e78", nome: "Elias Santa Rosa Da Silva", funcao: "Balconista", lojaId: "11" },
+  { id: "e79", nome: "Elineia Teixeira Santos", funcao: "Balconista", lojaId: "15" },
+  { id: "e80", nome: "Elizangela Secundo Silva Costa", funcao: "Balconista", lojaId: "28" },
+  { id: "e81", nome: "Eloane Sonia Falcao Dos Santos", funcao: "Balconista", lojaId: "30" },
+  { id: "e277", nome: "Emanuele Bacellar Gonçalves", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e82", nome: "Emili Dos Santos De Jesus", funcao: "Caixa", lojaId: "29" },
+  { id: "e83", nome: "Emilly Brandrão Duarte", funcao: "Caixa", lojaId: "29" },
+  { id: "e84", nome: "Emily Goes Santana", funcao: "Balconista", lojaId: "28" },
+  { id: "e85", nome: "Emyle Da Silva Ribeiro", funcao: "Balconista", lojaId: "8" },
+  { id: "e86", nome: "Emylli Santos De Souza", funcao: "Balconista", lojaId: "11" },
+  { id: "e87", nome: "Erilane Nascimento Dos Santos", funcao: "Balconista", lojaId: "6" },
+  { id: "e88", nome: "Esteffanne Couto Dos Santos", funcao: "Caixa", lojaId: "2" },
+  { id: "e89", nome: "Eugenio Lopes De Araujo Souza Filho", funcao: "Balconista", lojaId: "3" },
+  { id: "e90", nome: "Evelly Santos Machado", funcao: "Caixa", lojaId: "15" },
+  { id: "e91", nome: "Everaldo Caje De Oliveira", funcao: "Balconista", lojaId: "17" },
+  { id: "e92", nome: "Fabiano Goes Dos Santos", funcao: "Balconista", lojaId: "10" },
+  { id: "e93", nome: "Fabio Francisco Dos Santos Silva", funcao: "Balconista", lojaId: "14" },
+  { id: "e94", nome: "Felipe Gabriel Ferreira De Araujo", funcao: "Balconista", lojaId: "16" },
+  { id: "e95", nome: "Felipe Gomes Rodrigues Dos Santos", funcao: "Caixa", lojaId: "17" },
+  { id: "e96", nome: "Fernanda Batista Dos Santos", funcao: "Caixa", lojaId: "17" },
+  { id: "e97", nome: "Florenice Conceicao Dos Santos De Jesus", funcao: "Balconista", lojaId: "13" },
+  { id: "e98", nome: "Franciele Matos Santos", funcao: "Caixa", lojaId: "19" },
+  { id: "e99", nome: "Francisco Gustavo Da Silva", funcao: "Balconista", lojaId: "17" },
+  { id: "e278", nome: "Gabriel Souza Da Conceicao", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e279", nome: "Garibalde Severiano Ramos", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e100", nome: "Geisa Silva Da Conceicao", funcao: "Balconista", lojaId: "3" },
+  { id: "e101", nome: "Geovana Bitencourt", funcao: "Caixa", lojaId: "25" },
+  { id: "e102", nome: "Geovana Do Espirito Santo Encarnação", funcao: "Caixa", lojaId: "29" },
+  { id: "e280", nome: "Geovane Santos Soares", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e103", nome: "Gisele De Santana Santos", funcao: "Balconista", lojaId: "4" },
+  { id: "e104", nome: "Gresiele Dos Santos Bonfim", funcao: "Caixa", lojaId: "23" },
+  { id: "e105", nome: "Hannha Thaynah Oliviera Santana", funcao: "Balconista", lojaId: "14" },
+  { id: "e281", nome: "Helder Da Silva Rocha De Jesus", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e106", nome: "Iara Neves De Carvalho", funcao: "Caixa", lojaId: "23" },
+  { id: "e107", nome: "Iasnaya De Sousa Ramos", funcao: "Farmacêutico", lojaId: "8" },
+  { id: "e108", nome: "Icaro Pinheiro Oliveira", funcao: "Balconista", lojaId: "15" },
+  { id: "e282", nome: "Isabella Giovanna Carvalho Lima", funcao: "Auxiliar de Logística", lojaId: "9" },
+  { id: "e109", nome: "Isabelle De Souza Santos", funcao: "Caixa", lojaId: "2" },
+  { id: "e110", nome: "Israel Miranda Nascimento", funcao: "Balconista", lojaId: "20" },
+  { id: "e111", nome: "Italo Henrique D Anunciacao Leal", funcao: "Caixa", lojaId: "4" },
+  { id: "e112", nome: "Itamara Dos Santos Santana", funcao: "Balconista", lojaId: "16" },
+  { id: "e113", nome: "Ivanilda Peixoto Souza", funcao: "Balconista", lojaId: "6" },
+  { id: "e114", nome: "Ivanildes Da Exaltacao Brito", funcao: "Balconista", lojaId: "17" },
+  { id: "e115", nome: "Izamara Barros De Brito", funcao: "Caixa", lojaId: "1" },
+  { id: "e116", nome: "Jaciara Alves Souza", funcao: "Balconista", lojaId: "8" },
+  { id: "e117", nome: "Jailda De Souza Brandão", funcao: "Balconista", lojaId: "18" },
+  { id: "e118", nome: "Jamile De Santana Conceicao", funcao: "Balconista", lojaId: "7" },
+  { id: "e119", nome: "Janai De Souza Pereira", funcao: "Balconista", lojaId: "10" },
+  { id: "e120", nome: "Jane Pereira Santos", funcao: "Balconista", lojaId: "17" },
+  { id: "e121", nome: "Janine Santos Ferreira", funcao: "Balconista", lojaId: "13" },
+  { id: "e122", nome: "Jayne Souza Dos Santos Mello", funcao: "Farmacêutico", lojaId: "24" },
+  { id: "e283", nome: "Jeane Da Silva Souza", funcao: "Balconista", lojaId: "12" },
+  { id: "e123", nome: "Jeferson Sales Dos Santos De Souza", funcao: "Balconista", lojaId: "6" },
+  { id: "e124", nome: "Jeferson Souza Dos Santos", funcao: "Balconista", lojaId: "25" },
+  { id: "e125", nome: "Jenifer De Jesus Gomes Da Silva", funcao: "Caixa", lojaId: "12" },
+  { id: "e126", nome: "Jessica De Jesus Santos", funcao: "Caixa", lojaId: "29" },
+  { id: "e127", nome: "Jessica De Jesus Souza Cabral", funcao: "Balconista", lojaId: "12" },
+  { id: "e128", nome: "Jessica Sena Marques", funcao: "Caixa", lojaId: "26" },
+  { id: "e129", nome: "Jessica Silva Dos Santos Oliveira", funcao: "Caixa", lojaId: "28" },
+  { id: "e130", nome: "Joabes De Jesus Cardoso", funcao: "Balconista", lojaId: "15" },
+  { id: "e131", nome: "João Victor Batista Dos Santos", funcao: "Balconista", lojaId: "27" },
+  { id: "e132", nome: "Joao Victor Moreira Santos", funcao: "Balconista", lojaId: "29" },
+  { id: "e133", nome: "João Victor Nascimento Souza", funcao: "Balconista", lojaId: "14" },
+  { id: "e134", nome: "Jorge Alberto Bispo Da Purificacao", funcao: "Balconista", lojaId: "31" },
+  { id: "e135", nome: "Jose Augusto Santos Santana De Jesus", funcao: "Balconista", lojaId: "21" },
+  { id: "e136", nome: "Jose Mendes Xavier", funcao: "Caixa", lojaId: "3" },
+  { id: "e137", nome: "Jose Roberto Da Silva", funcao: "Balconista", lojaId: "2" },
+  { id: "e138", nome: "Josefa Gerusca Oliveira De Freitas Da Hora", funcao: "Balconista", lojaId: "6" },
+  { id: "e139", nome: "Josiane Carneiro Sales", funcao: "Caixa", lojaId: "10" },
+  { id: "e140", nome: "Josimeire Carvalho Dos Santos", funcao: "Balconista", lojaId: "5" },
+  { id: "e141", nome: "Jota Queiroz Aleluia", funcao: "Balconista", lojaId: "18" },
+  { id: "e142", nome: "Joyce Lacerda Queiroz Zuluaga", funcao: "Balconista", lojaId: "15" },
+  { id: "e143", nome: "Juliana Goncalves Dos Reis Souza", funcao: "Caixa", lojaId: "8" },
+  { id: "e144", nome: "Juliane Vitena Dos Santos Conceicao", funcao: "Farmacêutico", lojaId: "27" },
+  { id: "e145", nome: "Kaic Da Silva Felix Fraga", funcao: "Balconista", lojaId: "5" },
+  { id: "e146", nome: "Kaillany Vitoria Da Silva Mendes", funcao: "Caixa", lojaId: "20" },
+  { id: "e147", nome: "Kaique Porto Santiago Souza", funcao: "Balconista", lojaId: "5" },
+  { id: "e148", nome: "Kamily Nunes Dos Santos", funcao: "Caixa", lojaId: "6" },
+  { id: "e149", nome: "Karine Borges De Santana", funcao: "Caixa", lojaId: "10" },
+  { id: "e285", nome: "Karine Tosta Da Conceição Da Silva", funcao: "Caixa", lojaId: "5" },
+  { id: "e150", nome: "Karoline Coutinho Da Silva Ferreira", funcao: "Farmacêutico", lojaId: "1" },
+  { id: "e151", nome: "Ketlyn Carvalho Dos Santos", funcao: "Caixa", lojaId: "22" },
+  { id: "e152", nome: "Laine Oliveira De Jesus", funcao: "Balconista", lojaId: "15" },
+  { id: "e153", nome: "Lais Felix De Oliveira", funcao: "Balconista", lojaId: "26" },
+  { id: "e154", nome: "Laisa Kelly Santana Santos", funcao: "Balconista", lojaId: "3" },
+  { id: "e155", nome: "Larissa Ferreira Araujo", funcao: "Balconista", lojaId: "11" },
+  { id: "e156", nome: "Larissa Santana Ferreira Da Silva", funcao: "Balconista", lojaId: "17" },
+  { id: "e157", nome: "Leila Flavia Lima Mecenas", funcao: "Balconista", lojaId: "1" },
+  { id: "e158", nome: "Leticia Dos Anjos Santana", funcao: "Caixa", lojaId: "11" },
+  { id: "e159", nome: "Ligia Betman Ferreira", funcao: "Balconista", lojaId: "23" },
+  { id: "e160", nome: "Lilian Da Luz Santos", funcao: "Balconista", lojaId: "26" },
+  { id: "e161", nome: "Liliane Patricia Barreto Dos Santos", funcao: "Caixa", lojaId: "20" },
+  { id: "e162", nome: "Lívia De Ataide Dos Santos", funcao: "Caixa", lojaId: "18" },
+  { id: "e163", nome: "Lourdes Dos Santos Almeida", funcao: "Balconista", lojaId: "2" },
+  { id: "e164", nome: "Luamin Isis Lantyer De Paula", funcao: "Balconista", lojaId: "8" },
+  { id: "e165", nome: "Luana De Almeida Santos", funcao: "Caixa", lojaId: "21" },
+  { id: "e166", nome: "Luana Ferreira Costa", funcao: "Balconista", lojaId: "11" },
+  { id: "e167", nome: "Luana Vieira De Jesus", funcao: "Caixa", lojaId: "8" },
+  { id: "e168", nome: "Lucas Almeida De Oliveira", funcao: "Balconista", lojaId: "13" },
+  { id: "e169", nome: "Lucas Cruz Da Paixão", funcao: "Caixa", lojaId: "20" },
+  { id: "e170", nome: "Lucas De Jesus Silva", funcao: "Balconista", lojaId: "21" },
+  { id: "e171", nome: "Lucas Lima Sousa Da Silva", funcao: "Balconista", lojaId: "22" },
+  { id: "e172", nome: "Luciana Miranda Pimentel", funcao: "Balconista", lojaId: "22" },
+  { id: "e173", nome: "Luciano Santos De Santana", funcao: "Balconista", lojaId: "18" },
+  { id: "e174", nome: "Ludymilla Sena Do Nascimento", funcao: "Caixa", lojaId: "15" },
+  { id: "e175", nome: "Luis Felipe Lima Dos Santos", funcao: "Balconista", lojaId: "25" },
+  { id: "e176", nome: "Luziane Teixeira De Castro Silva", funcao: "Farmacêutico", lojaId: "7" },
+  { id: "e177", nome: "Magali Do Nascimento Silva Sena", funcao: "Farmacêutico", lojaId: "20" },
+  { id: "e178", nome: "Maiane Melo Santos Antunes", funcao: "Caixa", lojaId: "3" },
+  { id: "e179", nome: "Maiane Sousa Costa", funcao: "Farmacêutico", lojaId: "22" },
+  { id: "e180", nome: "Maiara Rebeca Lima Silva", funcao: "Caixa", lojaId: "10" },
+  { id: "e181", nome: "Maike Trindade Da Silva Santos", funcao: "Balconista", lojaId: "26" },
+  { id: "e182", nome: "Mailany Isla Ramos De Araujo", funcao: "Caixa", lojaId: "4" },
+  { id: "e183", nome: "Mainara Lima Ferreira", funcao: "Caixa", lojaId: "11" },
+  { id: "e184", nome: "Manuele Santos De Oliveira", funcao: "Farmacêutico", lojaId: "6" },
+  { id: "e185", nome: "Marcelo Oliveira Jambeiro De Jesus", funcao: "Caixa", lojaId: "30" },
+  { id: "e186", nome: "Marciel Souza Dos Santos", funcao: "Balconista", lojaId: "13" },
+  { id: "e187", nome: "Marcos Roberto Santana Santos", funcao: "Balconista", lojaId: "22" },
+  { id: "e188", nome: "Maria Clara Godinho Dos Santos", funcao: "Caixa", lojaId: "8" },
+  { id: "e189", nome: "Maria Eduarda Alves Morais", funcao: "Balconista", lojaId: "15" },
+  { id: "e190", nome: "Maria Eduarda Santos Silva", funcao: "Caixa", lojaId: "27" },
+  { id: "e191", nome: "Maria Luiza Lima Quinteiro", funcao: "Caixa", lojaId: "15" },
+  { id: "e192", nome: "Mariana Raissa Trindade Santos", funcao: "Balconista", lojaId: "19" },
+  { id: "e193", nome: "Mariana Santos Almeida", funcao: "Farmacêutico", lojaId: "25" },
+  { id: "e194", nome: "Marielle De Jesus Moreira", funcao: "Balconista", lojaId: "13" },
+  { id: "e195", nome: "Marina Silva De Souza", funcao: "Caixa", lojaId: "7" },
+  { id: "e196", nome: "Marizete Cerqueira Dos Santos", funcao: "Balconista", lojaId: "10" },
+  { id: "e197", nome: "Matheus Santana De Almeida", funcao: "Balconista", lojaId: "17" },
+  { id: "e198", nome: "Mayana Da Silva Santos", funcao: "Balconista", lojaId: "16" },
+  { id: "e199", nome: "Mayara Santos Gacilin", funcao: "Balconista", lojaId: "19" },
+  { id: "e200", nome: "Michele Queiroz Silva", funcao: "Balconista", lojaId: "21" },
+  { id: "e201", nome: "Mirele Souza Santana", funcao: "Balconista", lojaId: "6" },
+  { id: "e202", nome: "Mirlene Silva Do Evangelho Alves", funcao: "Balconista", lojaId: "4" },
+  { id: "e203", nome: "Monica Almeida De Matos", funcao: "Balconista", lojaId: "2" },
+  { id: "e204", nome: "Monica Beatriz Santos Moura", funcao: "Balconista", lojaId: "2" },
+  { id: "e205", nome: "Monica Taina Do Nascimento Araujo", funcao: "Balconista", lojaId: "15" },
+  { id: "e206", nome: "Naiara Leitao Neves", funcao: "Balconista", lojaId: "30" },
+  { id: "e207", nome: "Natale Camine Ramos Macedo", funcao: "Balconista", lojaId: "29" },
+  { id: "e208", nome: "Natiel Ferreira Da Silva", funcao: "Balconista", lojaId: "25" },
+  { id: "e209", nome: "Nayana Dhenyfer Carvalho Dos Santos", funcao: "Balconista", lojaId: "6" },
+  { id: "e210", nome: "Osmar Dos Santos Alves", funcao: "Balconista", lojaId: "7" },
+  { id: "e211", nome: "Otacilia Santos Dias", funcao: "Caixa", lojaId: "14" },
+  { id: "e212", nome: "Pablo Henrique Dos Santos Santana", funcao: "Caixa", lojaId: "21" },
+  { id: "e213", nome: "Patricia De Almeida Silva", funcao: "Caixa", lojaId: "26" },
+  { id: "e214", nome: "Paula Karine Mota Ferreira", funcao: "Caixa", lojaId: "25" },
+  { id: "e215", nome: "Paula Roberta Santos Dos Anjos", funcao: "Balconista", lojaId: "14" },
+  { id: "e216", nome: "Paula Santos De Silva", funcao: "Caixa", lojaId: "19" },
+  { id: "e217", nome: "Paulo Henrique Dos Santos Souza", funcao: "Balconista", lojaId: "8" },
+  { id: "e218", nome: "Pedro Paulo Martins Gomes Da Silva", funcao: "Caixa", lojaId: "18" },
+  { id: "e219", nome: "Rafael Luis Menezes Sampaio", funcao: "Balconista", lojaId: "30" },
+  { id: "e220", nome: "Rafael Santos Da Silva", funcao: "Caixa", lojaId: "30" },
+  { id: "e221", nome: "Rafaela Fiuza Avelino", funcao: "Caixa", lojaId: "4" },
+  { id: "e222", nome: "Raiane Evillyn De Jesus Santos De Souza", funcao: "Caixa", lojaId: "17" },
+  { id: "e223", nome: "Railane De Jesus Santos", funcao: "Caixa", lojaId: "27" },
+  { id: "e224", nome: "Raimunda De Oliveira Moreira Araujo", funcao: "Caixa", lojaId: "13" },
+  { id: "e225", nome: "Raissa Evellyn Almeida Dos Santos", funcao: "Caixa", lojaId: "6" },
+  { id: "e226", nome: "Raquel De Souza Silva", funcao: "Balconista", lojaId: "26" },
+  { id: "e227", nome: "Rayane Carapia Dos Santos", funcao: "Balconista", lojaId: "12" },
+  { id: "e228", nome: "Rebeca Nunes Dos Santos", funcao: "Caixa", lojaId: "22" },
+  { id: "e229", nome: "Reijane Sousa Dos Santos", funcao: "Balconista", lojaId: "29" },
+  { id: "e230", nome: "Rejane Dos Santos Macedo", funcao: "Balconista", lojaId: "19" },
+  { id: "e231", nome: "Rhaiza Reis Dos Santos Santana", funcao: "Caixa", lojaId: "5" },
+  { id: "e232", nome: "Rigelma Dos Santos Soares", funcao: "Balconista", lojaId: "8" },
+  { id: "e233", nome: "Rodrigo Figueredo De Oliveira", funcao: "Balconista", lojaId: "28" },
+  { id: "e234", nome: "Romário Gutierrz Borges", funcao: "Balconista", lojaId: "12" },
+  { id: "e235", nome: "Roseni Queiroz Oliveira", funcao: "Balconista", lojaId: "18" },
+  { id: "e236", nome: "Rosiane Lima Dos Santos", funcao: "Balconista", lojaId: "19" },
+  { id: "e237", nome: "Rosicleide Pereira Souza", funcao: "Balconista", lojaId: "15" },
+  { id: "e238", nome: "Ryan Domingues Fraga", funcao: "Caixa", lojaId: "24" },
+  { id: "e239", nome: "Samanta Camilly Silva Dos Santos", funcao: "Caixa", lojaId: "16" },
+  { id: "e240", nome: "Sandro Bispo Dos Santos", funcao: "Balconista", lojaId: "18" },
+  { id: "e241", nome: "Selma Pereira Carvalho", funcao: "Balconista", lojaId: "8" },
+  { id: "e242", nome: "Shellda Bastos Cosme", funcao: "Balconista", lojaId: "1" },
+  { id: "e243", nome: "Silvana De Souza", funcao: "Balconista", lojaId: "17" },
+  { id: "e244", nome: "Silvana Santos Andrade", funcao: "Balconista", lojaId: "29" },
+  { id: "e245", nome: "Silvia De Azevedo Dias", funcao: "Balconista", lojaId: "1" },
+  { id: "e246", nome: "Suelem De Jesus Goncalves", funcao: "Balconista", lojaId: "30" },
+  { id: "e247", nome: "Taiala De Jesus Dias", funcao: "Farmacêutico", lojaId: "15" },
+  { id: "e248", nome: "Tailan Do Sacramento Santana", funcao: "Caixa", lojaId: "7" },
+  { id: "e249", nome: "Taina Cesar Palmeira", funcao: "Balconista", lojaId: "25" },
+  { id: "e250", nome: "Taina Nascimento Dos Santos Silva", funcao: "Balconista", lojaId: "13" },
+  { id: "e251", nome: "Tainã Pereira De Souza", funcao: "Caixa", lojaId: "19" },
+  { id: "e252", nome: "Tais Lopes Dos Santos", funcao: "Balconista", lojaId: "18" },
+  { id: "e253", nome: "Tamires Carolino Da Silva Santos", funcao: "Caixa", lojaId: "5" },
+  { id: "e254", nome: "Tamires Simoes Santos", funcao: "Balconista", lojaId: "16" },
+  { id: "e255", nome: "Tatiane De Jesus Silva", funcao: "Balconista", lojaId: "4" },
+  { id: "e256", nome: "Tatyane Santos De Souza", funcao: "Farmacêutico", lojaId: "17" },
+  { id: "e257", nome: "Thais Bastos Souza", funcao: "Balconista", lojaId: "23" },
+  { id: "e258", nome: "Thalita Duarte Silva", funcao: "Caixa", lojaId: "14" },
+  { id: "e259", nome: "Thayna Silva De Sousa", funcao: "Caixa", lojaId: "1" },
+  { id: "e260", nome: "Tomaz Antônio Campos Garcia", funcao: "Caixa", lojaId: "23" },
+  { id: "e261", nome: "Valdione Leal Santos", funcao: "Caixa", lojaId: "16" },
+  { id: "e262", nome: "Vandeval Dos Santos Nobre", funcao: "Balconista", lojaId: "12" },
+  { id: "e263", nome: "Vanessa Alves Dos Santos", funcao: "Balconista", lojaId: "2" },
+  { id: "e264", nome: "Vanessa Costa Roxo", funcao: "Balconista", lojaId: "20" },
+  { id: "e265", nome: "Vanuza Santos Silva", funcao: "Caixa", lojaId: "19" },
+  { id: "e266", nome: "Veronice Visitacao Da Silva", funcao: "Balconista", lojaId: "10" },
+  { id: "e267", nome: "Vitoria Gama Da Silva", funcao: "Caixa", lojaId: "12" },
+  { id: "e268", nome: "Wendel Silva De Oliveira", funcao: "Caixa", lojaId: "31" },
+  { id: "e269", nome: "Yasmin Das Virgens Sousa", funcao: "Caixa", lojaId: "11" },
+  { id: "e270", nome: "Yasmin Medeiros Lopes", funcao: "Balconista", lojaId: "4" },
+];
 
 const MESES = [
   { id: '2026-05', label: 'Maio/2026', semanas: 4 },
   { id: '2026-06', label: 'Junho/2026', semanas: 4 },
   { id: '2026-07', label: 'Julho/2026', semanas: 3 },
-  { id: '2026-08', label: 'Agosto/2026', semanas: 4 },
-  { id: '2026-09', label: 'Setembro/2026', semanas: 4 },
-  { id: '2026-10', label: 'Outubro/2026', semanas: 4 },
-  { id: '2026-11', label: 'Novembro/2026', semanas: 4 },
-  { id: '2026-12', label: 'Dezembro/2026', semanas: 4 },
 ];
 
 /* PRNG determinístico simples para gerar dados de exemplo estáveis */
@@ -1131,7 +1220,6 @@ function PainelEvolucaoTemporal({ funcionarios, avaliacoes }) {
 
 function App() {
   const [avaliacoes, setAvaliacoes] = useState([]);
-  const [funcionarios, setFuncionarios] = useState([]);
   const [lojaId, setLojaId] = useState(LOJAS[0].id);
   const [funcaoFiltro, setFuncaoFiltro] = useState('Todas');
   const [mesId, setMesId] = useState('2026-07');
@@ -1140,38 +1228,23 @@ function App() {
   const [carregando, setCarregando] = useState(true);
   const [syncStatus, setSyncStatus] = useState('idle'); // idle | syncing | ok | erro
   const [syncErro, setSyncErro] = useState('');
-  const [colaboradoresErro, setColaboradoresErro] = useState('');
 
   async function recarregar() {
+    if (CONFIG.API_URL === 'COLE_AQUI_A_URL_DO_APPS_SCRIPT') {
+      setSyncStatus('erro');
+      setSyncErro('CONFIG.API_URL ainda não foi preenchida com a URL do Apps Script.');
+      setCarregando(false);
+      return;
+    }
     setSyncStatus('syncing');
     setSyncErro('');
-    setColaboradoresErro('');
-    setCarregando(true);
-
     try {
-      const dados = await apiCarregarDados();
-
-      // O backend é a fonte oficial dos dois conjuntos de dados.
-      setFuncionarios(dados.funcionarios);
-      setAvaliacoes(dados.avaliacoes);
+      const dados = await apiCarregarAvaliacoes();
+      setAvaliacoes(Array.isArray(dados) ? dados : []);
       setSyncStatus('ok');
     } catch (err) {
-      // Mesmo que o Apps Script falhe na leitura, tenta preservar o histórico
-      // publicado em CSV. Isso não substitui o backend para salvar avaliações.
-      try {
-        const historico = await carregarHistoricoCSVFallback_();
-        setAvaliacoes(historico);
-      } catch (_) {
-        setAvaliacoes([]);
-      }
-
       setSyncStatus('erro');
       setSyncErro(err.message || String(err));
-
-      setColaboradoresErro(
-        'Não foi possível carregar a base de colaboradores pelo Apps Script. ' +
-        'O Code.gs precisa retornar funcionarios[] a partir da aba base_colaboradores.'
-      );
     } finally {
       setCarregando(false);
     }
@@ -1180,7 +1253,7 @@ function App() {
   useEffect(() => { recarregar(); }, []);
 
   const mesAtual = MESES.find((m) => m.id === mesId);
-  const funcionariosLoja = funcionarios.filter((f) => f.ativo !== false && f.lojaId === lojaId && (funcaoFiltro === 'Todas' || f.funcao === funcaoFiltro));
+  const funcionariosLoja = FUNCIONARIOS.filter((f) => f.lojaId === lojaId && (funcaoFiltro === 'Todas' || f.funcao === funcaoFiltro));
 
   function avaliacaoDe(funcionarioId, semana) {
     return avaliacoes.find((a) => a.funcionarioId === funcionarioId && a.mes === mesId && a.semana === semana);
@@ -1250,9 +1323,9 @@ function App() {
   });
 
   /* ---- Comparação entre funções (mês/loja atual) ---- */
-  const funcoes = ['Farmacêutico', 'Balconista', 'Caixa', 'Auxiliar de Logística', 'Administrativo'];
+  const funcoes = ['Farmacêutico', 'Balconista', 'Caixa', 'Auxiliar de Logística'];
   const comparacaoFuncao = funcoes.map((fn) => {
-    const ids = funcionarios.filter((f) => f.lojaId === lojaId && f.funcao === fn).map((f) => f.id);
+    const ids = FUNCIONARIOS.filter((f) => f.lojaId === lojaId && f.funcao === fn).map((f) => f.id);
     const medias = ids.map((id) => mediaMensal(id)).filter((m) => m !== null);
     return medias.length ? +(medias.reduce((a, b) => a + b, 0) / medias.length).toFixed(2) : 0;
   });
@@ -1286,7 +1359,7 @@ function App() {
     return (
       <div className="max-w-7xl mx-auto p-6 flex flex-col items-center justify-center min-h-[60vh] text-slate-400">
         <div className="text-3xl mb-3">⏳</div>
-        <p className="text-sm">Carregando colaboradores e histórico da planilha...</p>
+        <p className="text-sm">Carregando avaliações da planilha...</p>
       </div>
     );
   }
@@ -1295,18 +1368,9 @@ function App() {
     <div className="max-w-7xl mx-auto p-4 md:p-6 print-area">
       {CONFIG.API_URL === 'COLE_AQUI_A_URL_DO_APPS_SCRIPT' && (
         <div className="no-print bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm rounded-xl p-4 mb-6">
-          ⚠️ <strong>Backend não configurado.</strong> O Web App do Apps Script precisa estar publicado
-          como "Qualquer pessoa" e retornar <code className="bg-slate-800 px-1.5 py-0.5 rounded">funcionarios[]</code>
-          e <code className="bg-slate-800 px-1.5 py-0.5 rounded">avaliacoes[]</code>. Sem isso, os botões de avaliação
-          não conseguem ser montados.
-        </div>
-      )}
-      {colaboradoresErro && (
-        <div className="no-print bg-red-500/10 border border-red-500/30 text-red-300 text-sm rounded-xl p-4 mb-6">
-          ⚠️ <strong>Falha ao carregar os colaboradores.</strong> {colaboradoresErro}
-          {' '}A aba <code className="bg-slate-800 px-1.5 py-0.5 rounded">base_colaboradores</code> deve conter
-          <code className="bg-slate-800 px-1.5 py-0.5 rounded">id, nome, funcao, lojaId, ativo</code> e o Apps Script
-          deve devolvê-la em <code className="bg-slate-800 px-1.5 py-0.5 rounded">funcionarios[]</code>.
+          ⚠️ <strong>Backend não configurado.</strong> Publique o Apps Script (Code.gs) e cole a URL do Web App
+          em <code className="bg-slate-800 px-1.5 py-0.5 rounded">CONFIG.API_URL</code> no topo do arquivo para
+          habilitar leitura e gravação real na planilha. Enquanto isso, nada será salvo.
         </div>
       )}
       {/* HEADER */}
